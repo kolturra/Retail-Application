@@ -21,7 +21,9 @@ def _insert_barcode(conn, item_id, code):
     try:
         conn.execute("INSERT INTO item_barcode(code, item_id) VALUES (?,?)", (code, item_id))
     except sqlite3.IntegrityError as exc:
-        raise ItemError(f"Barcode {code!r} is already used by another item") from exc
+        if "item_barcode.code" in str(exc):
+            raise ItemError(f"Barcode {code!r} is already used by another item") from exc
+        raise
 
 
 @writes
@@ -31,10 +33,13 @@ def create_item(conn, *, name, sell_price_paise, gst_rate_bp=0, unit="pcs", trac
     name = (name or "").strip()
     if not name:
         raise ItemError("Item name is required")
-    if sell_price_paise < 0:
-        raise ItemError("Selling price cannot be negative")
     if tracking not in TRACKING:
         raise ItemError(f"tracking must be one of {TRACKING}")
+    for label, value in (("sell_price_paise", sell_price_paise), ("buy_price_paise", buy_price_paise),
+                         ("gst_rate_bp", gst_rate_bp), ("reorder_milli", reorder_milli),
+                         ("warranty_months", warranty_months)):
+        if type(value) is not int or value < 0:
+            raise ItemError(f"{label} must be a non-negative whole number")
     sku = (sku or "").strip() or None
     with transaction(conn):
         try:
@@ -46,7 +51,9 @@ def create_item(conn, *, name, sell_price_paise, gst_rate_bp=0, unit="pcs", trac
                  reorder_milli, warranty_months, tracking),
             )
         except sqlite3.IntegrityError as exc:
-            raise ItemError(f"SKU {sku!r} is already used by another item") from exc
+            if "item.sku" in str(exc):
+                raise ItemError(f"SKU {sku!r} is already used by another item") from exc
+            raise
         item_id = cur.lastrowid
         for code in barcodes:
             _insert_barcode(conn, item_id, code)
@@ -57,6 +64,8 @@ def create_item(conn, *, name, sell_price_paise, gst_rate_bp=0, unit="pcs", trac
 @writes
 def add_barcode(conn, item_id, code):
     with transaction(conn):
+        if conn.execute("SELECT 1 FROM item WHERE id = ?", (item_id,)).fetchone() is None:
+            raise ItemError("No such item")
         _insert_barcode(conn, item_id, code)
 
 

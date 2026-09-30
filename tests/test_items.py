@@ -85,3 +85,39 @@ def test_name_search_stays_fast_on_a_large_catalogue(shop_conn):
     started = time.perf_counter()
     assert len(items.resolve(shop_conn, "product 4999")) == 1
     assert time.perf_counter() - started < 0.25
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"sell_price_paise": 10.5},
+    {"sell_price_paise": True},
+    {"sell_price_paise": 100, "buy_price_paise": -1},
+    {"sell_price_paise": 100, "buy_price_paise": 1.5},
+    {"sell_price_paise": 100, "gst_rate_bp": -1},
+    {"sell_price_paise": 100, "gst_rate_bp": False},
+    {"sell_price_paise": 100, "reorder_milli": -1},
+    {"sell_price_paise": 100, "warranty_months": -1},
+])
+def test_create_item_rejects_bad_numbers(shop_conn, kwargs):
+    with pytest.raises(items.ItemError):
+        items.create_item(shop_conn, name="A", **kwargs)
+    assert shop_conn.execute("SELECT COUNT(*) FROM item").fetchone()[0] == 0
+
+
+def test_add_barcode_unknown_item(shop_conn):
+    with pytest.raises(items.ItemError, match="No such item"):
+        items.add_barcode(shop_conn, 999, "123")
+
+
+def test_add_barcode_duplicate(shop_conn):
+    a = items.create_item(shop_conn, name="A", sell_price_paise=100, barcodes=["1"])
+    with pytest.raises(items.ItemError, match="already used"):
+        items.add_barcode(shop_conn, a, "1")
+    items.add_barcode(shop_conn, a, "2")
+
+
+def test_non_unique_integrity_error_not_reported_as_duplicate(shop_conn):
+    # Validation blocks every non-UNIQUE path via the public API, so provoke the
+    # FK failure directly through the private helper.
+    import sqlite3
+    with pytest.raises(sqlite3.IntegrityError):
+        items._insert_barcode(shop_conn, 999, "555")
