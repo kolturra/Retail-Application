@@ -53,6 +53,8 @@ def _add_unit(conn, item_id, *, serial=None, batch_no=None, expiry=None):
             (item_id, serial, batch_no, expiry),
         )
     except sqlite3.IntegrityError as exc:
+        if "UNIQUE" not in str(exc) or "stock_unit" not in str(exc):
+            raise
         raise DuplicateSerial(f"Serial {serial!r} already exists for this item") from exc
     return cur.lastrowid
 

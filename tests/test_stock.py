@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from retail.services import items, stock
@@ -71,3 +73,9 @@ def test_low_stock_lists_items_at_or_below_reorder_level(shop_conn):
     stock.record(shop_conn, a, 5_000, "opening")
     stock.record(shop_conn, b, 6_000, "opening")
     assert [r["name"] for r in stock.low_stock(shop_conn)] == ["A"]
+
+
+def test_add_unit_unknown_item_is_not_reported_as_duplicate_serial(shop_conn):
+    with pytest.raises(sqlite3.IntegrityError) as exc:
+        stock.add_unit(shop_conn, 9999, serial="X1")
+    assert not isinstance(exc.value, stock.DuplicateSerial)
