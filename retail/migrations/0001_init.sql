@@ -174,3 +174,29 @@ CREATE TABLE expense (
   note TEXT NOT NULL DEFAULT '',
   staff_id INTEGER REFERENCES staff(id)
 );
+
+-- Immutability: stock ledger and audit log are append-only; finalized bills are frozen.
+CREATE TRIGGER trg_stock_movement_no_update BEFORE UPDATE ON stock_movement
+BEGIN SELECT RAISE(ABORT, 'stock_movement is append-only'); END;
+CREATE TRIGGER trg_stock_movement_no_delete BEFORE DELETE ON stock_movement
+BEGIN SELECT RAISE(ABORT, 'stock_movement is append-only'); END;
+
+CREATE TRIGGER trg_audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+CREATE TRIGGER trg_audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+
+CREATE TRIGGER trg_bill_final_no_update BEFORE UPDATE ON bill WHEN OLD.status = 'final'
+BEGIN SELECT RAISE(ABORT, 'finalized bill is immutable'); END;
+CREATE TRIGGER trg_bill_final_no_delete BEFORE DELETE ON bill WHEN OLD.status = 'final'
+BEGIN SELECT RAISE(ABORT, 'finalized bill is immutable'); END;
+
+CREATE TRIGGER trg_bill_line_final_no_insert BEFORE INSERT ON bill_line
+WHEN (SELECT status FROM bill WHERE id = NEW.bill_id) = 'final'
+BEGIN SELECT RAISE(ABORT, 'finalized bill is immutable'); END;
+CREATE TRIGGER trg_bill_line_final_no_update BEFORE UPDATE ON bill_line
+WHEN (SELECT status FROM bill WHERE id = OLD.bill_id) = 'final'
+BEGIN SELECT RAISE(ABORT, 'finalized bill is immutable'); END;
+CREATE TRIGGER trg_bill_line_final_no_delete BEFORE DELETE ON bill_line
+WHEN (SELECT status FROM bill WHERE id = OLD.bill_id) = 'final'
+BEGIN SELECT RAISE(ABORT, 'finalized bill is immutable'); END;

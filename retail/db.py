@@ -58,7 +58,13 @@ def transaction(conn):
             conn.execute(f"RELEASE {name}")
             raise
         else:
-            conn.execute(f"RELEASE {name}")
+            try:
+                conn.execute(f"RELEASE {name}")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute(f"ROLLBACK TO {name}")
+                    conn.execute(f"RELEASE {name}")
+                raise
     else:
         conn.execute("BEGIN")
         try:
@@ -67,4 +73,9 @@ def transaction(conn):
             conn.execute("ROLLBACK")
             raise
         else:
-            conn.execute("COMMIT")
+            try:
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise

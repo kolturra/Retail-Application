@@ -78,3 +78,14 @@ def test_outer_failure_rolls_back_inner_success(tmp_path):
                 conn.execute("INSERT INTO t VALUES (1)")
             raise RuntimeError("outer")
     assert conn.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0
+
+
+def test_failed_commit_rolls_back_and_leaves_no_open_transaction(tmp_path):
+    conn = db.connect(tmp_path / "a.db")
+    conn.execute("CREATE TABLE p(id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE c(pid INTEGER REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED)")
+    with pytest.raises(sqlite3.IntegrityError):
+        with db.transaction(conn):
+            conn.execute("INSERT INTO c VALUES (99)")
+    assert conn.in_transaction is False
+    assert conn.execute("SELECT COUNT(*) FROM c").fetchone()[0] == 0
