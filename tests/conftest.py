@@ -21,3 +21,12 @@ def conn(db_path):
     db.migrate(connection)
     yield connection
     connection.close()
+
+
+from retail.services import shop as _shop
+
+
+@pytest.fixture
+def shop_conn(conn):
+    _shop.setup_shop(conn, name="Test Shop", state_code="36")
+    return conn
