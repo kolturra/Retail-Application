@@ -1,1 +1,9 @@
 .superpowers/
+.venv/
+__pycache__/
+*.egg-info/
+*.db
+*.restoring
+keys/
+build/
+dist/
