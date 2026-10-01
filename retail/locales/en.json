@@ -55,5 +55,15 @@
   "tax.sgst": "SGST",
   "tax.igst": "IGST",
   "item.hsn": "HSN",
-  "item.sku": "SKU"
+  "item.sku": "SKU",
+  "act.title": "Activate",
+  "act.intro": "Send this machine ID to get your license key, then paste the key below.",
+  "act.machine_id": "Machine ID",
+  "act.copy": "Copy",
+  "act.request_email": "Request by email",
+  "act.request_whatsapp": "Request on WhatsApp",
+  "act.key": "License key",
+  "act.activate": "Activate",
+  "act.quit": "Quit",
+  "act.invalid": "That key is not valid for this PC."
 }

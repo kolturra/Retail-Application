@@ -55,5 +55,15 @@
   "tax.sgst": "SGST",
   "tax.igst": "IGST",
   "item.hsn": "HSN",
-  "item.sku": "SKU"
+  "item.sku": "SKU",
+  "act.title": "యాక్టివేట్ చేయండి",
+  "act.intro": "లైసెన్స్ కీ పొందడానికి ఈ మెషిన్ ఐడిని మాకు పంపండి, తర్వాత కీని క్రింద అతికించండి.",
+  "act.machine_id": "మెషిన్ ఐడి",
+  "act.copy": "కాపీ చేయండి",
+  "act.request_email": "ఈమెయిల్ ద్వారా అడగండి",
+  "act.request_whatsapp": "WhatsApp లో అడగండి",
+  "act.key": "లైసెన్స్ కీ",
+  "act.activate": "యాక్టివేట్ చేయండి",
+  "act.quit": "నిష్క్రమించు",
+  "act.invalid": "ఈ కీ ఈ PC కి సరైనది కాదు."
 }

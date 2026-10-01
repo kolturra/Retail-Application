@@ -55,5 +55,15 @@
   "tax.sgst": "SGST",
   "tax.igst": "IGST",
   "item.hsn": "HSN",
-  "item.sku": "SKU"
+  "item.sku": "SKU",
+  "act.title": "सक्रिय करें",
+  "act.intro": "लाइसेंस कुंजी पाने के लिए यह मशीन आईडी हमें भेजें, फिर नीचे कुंजी चिपकाएँ।",
+  "act.machine_id": "मशीन आईडी",
+  "act.copy": "कॉपी करें",
+  "act.request_email": "ईमेल से माँगें",
+  "act.request_whatsapp": "WhatsApp पर माँगें",
+  "act.key": "लाइसेंस कुंजी",
+  "act.activate": "सक्रिय करें",
+  "act.quit": "बाहर निकलें",
+  "act.invalid": "यह कुंजी इस पीसी के लिए सही नहीं है।"
 }
