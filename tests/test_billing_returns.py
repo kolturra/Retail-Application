@@ -394,3 +394,30 @@ def test_list_pairs_are_accepted(shop_conn):
     soap, bill_id, line_id = sold_soaps(shop_conn, qty=2000)
     ret = billing.create_return(shop_conn, bill_id, [[line_id, 1000]])
     assert billing.get_bill(shop_conn, ret)["bill"]["total_paise"] == 11800
+
+
+@pytest.mark.parametrize("qty_sold,qty_back,price,rate,inter_state", [
+    (3000, 1000, 10000, 1800, False),
+    (3000, 1000, 10000, 1800, True),
+    (7000, 2000, 9999, 500, False),
+    (7000, 3000, 12345, 4000, True),
+    (9000, 4000, 1049, 1800, False),
+])
+def test_partial_return_line_components_always_add_up(shop_conn, qty_sold, qty_back, price, rate, inter_state):
+    party_id = parties.create_party(shop_conn, name="Pune", state_code="27") if inter_state else None
+    item = items.create_item(shop_conn, name="Shirt", sell_price_paise=price, gst_rate_bp=rate)
+    stock.record(shop_conn, item, 20_000, "opening")
+    bill_id = billing.start_bill(shop_conn, party_id=party_id)
+    line_id = billing.add_line(shop_conn, bill_id, item, qty_sold)
+    total = billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"]
+    billing.finalize(shop_conn, bill_id, [("cash", total)])
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, qty_back)])
+    detail = billing.get_bill(shop_conn, ret)
+    for line in detail["lines"]:
+        assert line["total_paise"] == (line["taxable_paise"] + line["cgst_paise"]
+                                       + line["sgst_paise"] + line["igst_paise"])
+    b = detail["bill"]
+    assert b["total_paise"] == (b["taxable_paise"] + b["cgst_paise"] + b["sgst_paise"]
+                                + b["igst_paise"] + b["round_off_paise"])
+    if inter_state:
+        assert b["cgst_paise"] == 0 and b["sgst_paise"] == 0

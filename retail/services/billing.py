@@ -310,6 +310,29 @@ def finalize(conn, bill_id, payments, *, today=None):
 
 
 @writes
+def _return_part(ol, done, qty):
+    """Money components of returning `qty` from original line `ol`, given what earlier final
+    returns already took (`done`). The quantity that completes the line takes the exact remainder
+    (no drift). A partial quantity pro-rates the line TOTAL and TAX and derives taxable = total - tax,
+    so total == taxable + cgst + sgst + igst always holds."""
+    remaining = ol["qty_milli"] - done["qty_milli"]
+    if qty == remaining:
+        return {c: ol[c] - done[c] for c in _RETURN_COMPONENTS}
+
+    def share(value):
+        return (2 * value * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
+
+    total = share(ol["total_paise"])
+    tax = share(ol["cgst_paise"] + ol["sgst_paise"] + ol["igst_paise"])
+    if ol["igst_paise"]:
+        cgst, sgst, igst = 0, 0, tax
+    else:
+        cgst = min(share(ol["cgst_paise"]), tax)
+        sgst, igst = tax - cgst, 0
+    return {"amount_paise": share(ol["amount_paise"]), "taxable_paise": total - tax,
+            "cgst_paise": cgst, "sgst_paise": sgst, "igst_paise": igst, "total_paise": total}
+
+
 def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
     """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill.
 
@@ -364,12 +387,7 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
             remaining = ol["qty_milli"] - done["qty_milli"]
             if qty > remaining:
                 raise BillingError("Cannot return more than was sold")
-            if qty == remaining:
-                # settle exactly, no rounding drift: original minus everything returned before
-                part = {c: ol[c] - done[c] for c in _RETURN_COMPONENTS}
-            else:
-                part = {c: (2 * ol[c] * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
-                        for c in _RETURN_COMPONENTS}
+            part = _return_part(ol, done, qty)
             # Inserting into a still-held bill is allowed by the immutability triggers.
             conn.execute(
                 """INSERT INTO bill_line(bill_id, item_id, unit_id, ref_line_id, qty_milli, rate_paise,
@@ -388,9 +406,9 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
         #                 min(round_to_rupee(prior_lines + line_sum), original total)
         #   refund      = max(target - prior_total, 0); round_off = refund - line_sum
         # So a refund is never negative, cumulative refunds never exceed what the customer paid,
-        # and once everything is back they equal it exactly. A partial return's round-off stays
-        # within +/-50 paise; the completing one can reach about +/-1 rupee (the original bill's
-        # round-off plus the rounding already given on earlier returns).
+        # and once everything is back they equal it exactly. Any return after the first can carry a
+        # round-off of up to about +/-1 rupee: it is the difference between the cumulative rounding
+        # of all returns so far and of the earlier ones.
         taxable, cgst, sgst, igst, line_sum = conn.execute(
             """SELECT COALESCE(SUM(taxable_paise), 0), COALESCE(SUM(cgst_paise), 0),
                       COALESCE(SUM(sgst_paise), 0), COALESCE(SUM(igst_paise), 0),

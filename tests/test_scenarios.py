@@ -85,11 +85,11 @@ def test_expired_license_is_read_only_but_data_stays_visible_and_exportable(db_p
     priv, pub = issuer.generate_keypair()
     machine = "RTL-AAAA-BBBB-CCCC-DDDD"
     key_path = tmp_path / "license.key"
-    lic.save_key(key_path, issuer.issue(priv, machine=machine, buyer="Shop", expires="2026-12-31"))
-    assert lic.apply_license(key_path, pub, machine, date(2026, 12, 31)).status == "active"
+    lic.save_key(key_path, issuer.issue(priv, machine=machine, buyer="Shop", expires="2099-12-31"))
+    assert lic.apply_license(key_path, pub, machine, date(2099, 12, 31)).status == "active"
     billing.start_bill(conn)                                        # still writable on the last day
 
-    state = lic.apply_license(key_path, pub, machine, date(2027, 1, 1))
+    state = lic.apply_license(key_path, pub, machine, date(2100, 1, 1))
     assert state.status == "expired" and guard.is_read_only()
     with pytest.raises(guard.ReadOnlyError):
         billing.start_bill(conn)
