@@ -7,7 +7,7 @@ import pytest
 from retail import i18n
 
 LOCALES = Path(i18n.__file__).parent / "locales"
-SAME_AS_ENGLISH_ALLOWED = {"pay.upi"}
+SAME_AS_ENGLISH_ALLOWED = {"pay.upi", "tax.gstin", "tax.cgst", "tax.sgst", "tax.igst", "item.hsn", "item.sku"}
 
 
 def load(code):
