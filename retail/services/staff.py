@@ -14,9 +14,11 @@ class StaffError(ValueError):
 
 def _check_date(text):
     try:
-        date.fromisoformat(text)
+        canonical = date.fromisoformat(text).isoformat() == text
     except (TypeError, ValueError) as exc:
         raise StaffError("Dates must look like 2026-09-30") from exc
+    if not canonical:
+        raise StaffError("Dates must look like 2026-09-30")
 
 
 def _check_int(value, label):
@@ -54,11 +56,18 @@ def add_expense(conn, *, spent_on, category, amount_paise, note="", staff_id=Non
     _check_int(amount_paise, "Amount")
     if amount_paise <= 0:
         raise StaffError("Amount must be greater than zero")
-    if staff_id is not None and conn.execute(
-        "SELECT 1 FROM staff WHERE id = ?", (staff_id,)
-    ).fetchone() is None:
-        raise StaffError("No such staff member")
     with transaction(conn):
+        if staff_id is not None and conn.execute(
+            "SELECT 1 FROM staff WHERE id = ?", (staff_id,)
+        ).fetchone() is None:
+            raise StaffError("No such staff member")
+        if category == "salary" and staff_id is not None:
+            month = spent_on[:7]
+            if conn.execute(
+                "SELECT 1 FROM expense WHERE staff_id = ? AND category = 'salary' AND substr(spent_on, 1, 7) = ?",
+                (staff_id, month),
+            ).fetchone():
+                raise StaffError(f"Salary for {month} was already recorded")
         cur = conn.execute(
             "INSERT INTO expense(spent_on, category, amount_paise, note, staff_id) VALUES (?,?,?,?,?)",
             (spent_on, category, amount_paise, note, staff_id),
@@ -77,14 +86,10 @@ def pay_salary(conn, staff_id, spent_on=None):
             raise StaffError("No such staff member")
         if person["monthly_salary_paise"] <= 0:
             raise StaffError("This staff member has no monthly salary set")
-        month = spent_on[:7]
-        if conn.execute(
-            "SELECT 1 FROM expense WHERE staff_id = ? AND category = 'salary' AND substr(spent_on, 1, 7) = ?",
-            (staff_id, month),
-        ).fetchone():
-            raise StaffError(f"Salary for {month} was already recorded")
+        if not person["active"]:
+            raise StaffError("Staff member is inactive")
         return add_expense(conn, spent_on=spent_on, category="salary",
-                           amount_paise=person["monthly_salary_paise"], note=f"Salary {month}",
+                           amount_paise=person["monthly_salary_paise"], note=f"Salary {spent_on[:7]}",
                            staff_id=staff_id)
 
 
@@ -93,6 +98,8 @@ def expense_total(conn, start, end, category=None):
     _check_date(end)
     if start > end:
         raise StaffError("Start date must not be after end date")
+    if category is not None and category not in CATEGORIES:
+        raise StaffError(f"category must be one of {CATEGORIES}")
     sql = "SELECT COALESCE(SUM(amount_paise), 0) FROM expense WHERE spent_on BETWEEN ? AND ?"
     params = [start, end]
     if category:

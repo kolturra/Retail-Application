@@ -82,3 +82,65 @@ def test_writes_blocked_when_read_only(shop_conn):
     guard.set_read_only(True)
     with pytest.raises(guard.ReadOnlyError):
         staff.add_staff(shop_conn, name="X")
+
+
+@pytest.mark.parametrize("bad", ["20260930", "2026-W40-3"])
+def test_non_canonical_dates_rejected_and_nothing_written(shop_conn, bad):
+    a = staff.add_staff(shop_conn, name="Anil", monthly_salary_paise=1000)
+    with pytest.raises(StaffError):
+        staff.add_expense(shop_conn, spent_on=bad, category="rent", amount_paise=100)
+    with pytest.raises(StaffError):
+        staff.pay_salary(shop_conn, a, bad)
+    with pytest.raises(StaffError):
+        staff.expense_total(shop_conn, bad, "2026-12-31")
+    with pytest.raises(StaffError):
+        staff.expense_total(shop_conn, "2026-01-01", bad)
+    assert shop_conn.execute("SELECT COUNT(*) FROM expense").fetchone()[0] == 0
+
+
+def test_add_expense_salary_once_per_month_per_staff(shop_conn):
+    a = staff.add_staff(shop_conn, name="Anil", monthly_salary_paise=1000)
+    staff.add_expense(shop_conn, spent_on="2026-09-01", category="salary", amount_paise=500, staff_id=a)
+    with pytest.raises(StaffError):
+        staff.add_expense(shop_conn, spent_on="2026-09-20", category="salary", amount_paise=500, staff_id=a)
+    staff.add_expense(shop_conn, spent_on="2026-09-20", category="salary", amount_paise=500)
+    staff.add_expense(shop_conn, spent_on="2026-09-20", category="salary", amount_paise=500)
+
+
+def test_pay_salary_refuses_inactive_and_leaves_no_row(shop_conn):
+    a = staff.add_staff(shop_conn, name="Anil", monthly_salary_paise=1000)
+    shop_conn.execute("UPDATE staff SET active = 0 WHERE id = ?", (a,))
+    with pytest.raises(StaffError, match="inactive"):
+        staff.pay_salary(shop_conn, a, "2026-09-30")
+    assert shop_conn.execute("SELECT COUNT(*) FROM expense").fetchone()[0] == 0
+
+
+def test_expense_total_validates_category(shop_conn):
+    with pytest.raises(StaffError):
+        staff.expense_total(shop_conn, "2026-09-01", "2026-09-30", category="party")
+
+
+def test_expense_and_salary_blocked_when_read_only(shop_conn):
+    a = staff.add_staff(shop_conn, name="Anil", monthly_salary_paise=1000)
+    guard.set_read_only(True)
+    with pytest.raises(guard.ReadOnlyError):
+        staff.add_expense(shop_conn, spent_on="2026-09-05", category="rent", amount_paise=100)
+    with pytest.raises(guard.ReadOnlyError):
+        staff.pay_salary(shop_conn, a, "2026-09-30")
+
+
+def test_audit_rows_written(shop_conn):
+    a = staff.add_staff(shop_conn, name="Anil")
+    e = staff.add_expense(shop_conn, spent_on="2026-09-05", category="rent", amount_paise=100)
+    rows = shop_conn.execute(
+        "SELECT entity, entity_id FROM audit_log WHERE entity IN ('staff','expense')").fetchall()
+    assert ("staff", a) in [tuple(r) for r in rows]
+    assert ("expense", e) in [tuple(r) for r in rows]
+
+
+def test_pay_salary_defaults_to_today(shop_conn):
+    from retail import clock
+    a = staff.add_staff(shop_conn, name="Anil", monthly_salary_paise=1000)
+    staff.pay_salary(shop_conn, a)
+    row = shop_conn.execute("SELECT spent_on FROM expense WHERE staff_id = ?", (a,)).fetchone()
+    assert row["spent_on"] == clock.today().isoformat()
