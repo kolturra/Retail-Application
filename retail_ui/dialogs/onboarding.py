@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
@@ -29,7 +29,10 @@ class OnboardingData:
 
 
 def apply_onboarding(session, data: OnboardingData) -> None:
-    """Validate everything first, then write; nothing is written if anything is wrong."""
+    """Validate everything first, then write; nothing is written if anything is wrong.
+
+    Validation is atomic. The write tail (setup_shop -> apply_template -> settings) is not one
+    transaction; if it fails part-way, re-running the wizard retries it (setup_shop replaces the row)."""
     if validators.gstin_error(data.gstin, data.state_code):
         raise shop.ShopError("Invalid GSTIN for the selected state")
     if data.template not in segments.list_templates():
@@ -61,14 +64,40 @@ class _Page(QWizardPage):
         self._built = False
 
     def initializePage(self):
+        wiz = self.wizard()
+        if wiz is not None:
+            wiz._built_language = i18n.get_language()
         if not self._built:
             self.build()
             self._built = True
+            pending = getattr(wiz, "_pending", None)
+            if pending is not None:
+                self.fill(pending)
         if self.title_key:
             self.setTitle(tr(self.title_key))
 
     def build(self):
         raise NotImplementedError
+
+    def fill(self, data):
+        """Write previously entered values back into the (re)built widgets."""
+
+    def read(self, data):
+        """Copy this page's values into data (only called when the page is built)."""
+
+    def reset(self):
+        """Drop the built widgets so the next initializePage() rebuilds them in the current language."""
+        if not self._built:
+            return
+        old = self.layout()
+        if old is not None:
+            QWidget().setLayout(old)
+        for child in self.children():
+            if isinstance(child, QWidget):
+                child.setParent(None)
+            if isinstance(child, (QWidget, QButtonGroup)):
+                child.deleteLater()
+        self._built = False
 
 
 class LanguagePage(_Page):
@@ -85,8 +114,16 @@ class LanguagePage(_Page):
         super().initializePage()
         self.setTitle("Language / भाषा / భాష")
 
+    def read(self, data):
+        data.language = self.combo.currentData()
+
     def validatePage(self):
-        i18n.set_language(self.combo.currentData())
+        new = self.combo.currentData()
+        wiz = self.wizard()
+        old = getattr(wiz, "_built_language", None)
+        i18n.set_language(new)
+        if wiz is not None and old is not None and old != new:
+            wiz._on_language_applied()
         return True
 
 
@@ -111,6 +148,18 @@ class ShopPage(_Page):
         for signal in (self.name.textChanged, self.gstin.textChanged, self.state.currentIndexChanged):
             signal.connect(lambda *_: self.completeChanged.emit())
 
+    def read(self, data):
+        data.name = self.name.text().strip()
+        data.state_code = self.state.currentData()
+        data.gstin = self.gstin.text().strip()
+        data.address = self.address.text().strip()
+
+    def fill(self, data):
+        self.name.setText(data.name)
+        self.state.setCurrentIndex(max(0, self.state.findData(data.state_code)))
+        self.gstin.setText(data.gstin)
+        self.address.setText(data.address)
+
     def isComplete(self):
         if not self._built:
             return False
@@ -131,10 +180,17 @@ class SegmentPage(_Page):
             self.group.addButton(radio)
             self._radios[name] = radio
             layout.addWidget(radio)
-        self.select(segments.list_templates()[0] if "grocery" not in self._radios else "grocery")
+        self.select("grocery" if "grocery" in self._radios else next(iter(self._radios)))
 
     def select(self, name):
         self._radios[name].setChecked(True)
+
+    def read(self, data):
+        data.template = self.selected()
+
+    def fill(self, data):
+        if data.template in self._radios:
+            self.select(data.template)
 
     def selected(self):
         return next(name for name, radio in self._radios.items() if radio.isChecked())
@@ -156,6 +212,16 @@ class BillingPage(_Page):
         form.addRow(self.gst_enabled)
         form.addRow(self.prices_incl)
         form.addRow(tr("ob.oversell"), self.oversell)
+
+    def read(self, data):
+        data.gst_enabled = self.gst_enabled.isChecked()
+        data.price_includes_gst = self.prices_incl.isChecked()
+        data.oversell_policy = self.oversell.currentData()
+
+    def fill(self, data):
+        self.gst_enabled.setChecked(data.gst_enabled)
+        self.prices_incl.setChecked(data.price_includes_gst)
+        self.oversell.setCurrentIndex(max(0, self.oversell.findData(data.oversell_policy)))
 
 
 class BackupPage(_Page):
@@ -179,6 +245,14 @@ class BackupPage(_Page):
             container.setLayout(row)
             layout.addWidget(container)
 
+    def read(self, data):
+        data.backup_dir = self.backup_dir.text().strip()
+        data.extra_backup_dir = self.extra_dir.text().strip()
+
+    def fill(self, data):
+        self.backup_dir.setText(data.backup_dir)
+        self.extra_dir.setText(data.extra_backup_dir)
+
     def _browse(self, edit):
         folder = QFileDialog.getExistingDirectory(self, tr("common.browse"), edit.text())
         if folder:
@@ -189,10 +263,12 @@ class OnboardingWizard(QWizard):
     def __init__(self, session, parent=None):
         super().__init__(parent)
         self.session = session
-        self.setWindowTitle(f"{APP_NAME}")
+        self._pending = None          # values to restore after a language change rebuilds the pages
+        self._built_language = None   # language the pages were last built in
+        self.setWindowTitle(f"{APP_NAME} — {tr('ob.title')}")
         self.language_page, self.shop_page = LanguagePage(), ShopPage()
         self.segment_page, self.billing_page, self.backup_page = SegmentPage(), BillingPage(), BackupPage()
-        for page in (self.language_page, self.shop_page, self.segment_page, self.billing_page, self.backup_page):
+        for page in self._pages():
             self.addPage(page)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
@@ -203,20 +279,23 @@ class OnboardingWizard(QWizard):
         self.setButtonText(QWizard.WizardButton.FinishButton, tr("wiz.finish"))
         self.setButtonText(QWizard.WizardButton.CancelButton, tr("common.cancel"))
 
+    def _pages(self):
+        return (self.language_page, self.shop_page, self.segment_page, self.billing_page, self.backup_page)
+
     def collect(self) -> OnboardingData:
-        return OnboardingData(
-            name=self.shop_page.name.text().strip(),
-            state_code=self.shop_page.state.currentData(),
-            gstin=self.shop_page.gstin.text().strip(),
-            address=self.shop_page.address.text().strip(),
-            template=self.segment_page.selected(),
-            gst_enabled=self.billing_page.gst_enabled.isChecked(),
-            price_includes_gst=self.billing_page.prices_incl.isChecked(),
-            oversell_policy=self.billing_page.oversell.currentData(),
-            language=self.language_page.combo.currentData(),
-            backup_dir=self.backup_page.backup_dir.text().strip(),
-            extra_backup_dir=self.backup_page.extra_dir.text().strip(),
-        )
+        """Values from the built pages; unbuilt pages contribute pending (or default) values."""
+        data = replace(self._pending) if self._pending is not None else OnboardingData()
+        for page in self._pages():
+            if page._built:
+                page.read(data)
+        return data
+
+    def _on_language_applied(self):
+        """The language changed after other pages were built: rebuild them, keeping what was entered."""
+        self._pending = self.collect()
+        for page in self._pages()[1:]:
+            page.reset()
+        self._built_language = i18n.get_language()
 
     def accept(self):
         try:

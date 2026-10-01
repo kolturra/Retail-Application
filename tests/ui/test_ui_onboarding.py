@@ -123,3 +123,50 @@ def test_accept_applies_and_a_failure_keeps_the_wizard_open(make_session, qtbot,
     w.shop_page.name.setText("Good Shop")
     w.accept()
     assert s.has_shop() and w.result() == 1
+
+
+def _fill_english(w):
+    for page_id in w.pageIds():
+        w.page(page_id).initializePage()
+    w.shop_page.name.setText("Raju Stores")
+    w.shop_page.address.setText("Pune")
+    w.segment_page.select("electronics")
+    w.billing_page.gst_enabled.setChecked(False)
+
+
+def test_changing_language_after_going_back_rebuilds_pages_and_keeps_values(make_session, qtbot):
+    s = make_session(with_shop=False)
+    w = OnboardingWizard(s)
+    qtbot.addWidget(w)
+    _fill_english(w)
+    w.language_page.initializePage()
+    w.language_page.combo.setCurrentIndex(w.language_page.combo.findData("hi"))
+    assert w.language_page.validatePage() is True
+    for page in (w.shop_page, w.segment_page, w.billing_page, w.backup_page):
+        page.initializePage()
+    assert i18n.get_language() == "hi"
+    assert w.shop_page.title() == i18n.tr("ob.shop_page")
+    assert w.billing_page.oversell.itemText(0) == i18n.tr("ob.oversell_block")
+    got = w.collect()
+    assert (got.name, got.address, got.template, got.gst_enabled, got.language) == (
+        "Raju Stores", "Pune", "electronics", False, "hi")
+    assert w.shop_page.name.text() == "Raju Stores" and w.shop_page.state.currentData() == "36"
+
+
+def test_unchanged_language_does_not_reset_pages(make_session, qtbot):
+    s = make_session(with_shop=False)
+    w = OnboardingWizard(s)
+    qtbot.addWidget(w)
+    _fill_english(w)
+    name_widget = w.shop_page.name
+    w.language_page.initializePage()
+    assert w.language_page.validatePage() is True
+    assert w.shop_page._built and w.shop_page.name is name_widget and w._pending is None
+
+
+def test_onboarding_persists_ui_settings(make_session, tmp_path):
+    from retail_ui import settings as ui_settings
+    s = make_session(with_shop=False)
+    apply_onboarding(s, data(backup_dir=str(tmp_path / "bk"), extra_backup_dir=str(tmp_path / "usb")))
+    loaded = ui_settings.load(s.paths.settings_path)
+    assert (loaded.backup_dir, loaded.extra_backup_dir) == (str(tmp_path / "bk"), str(tmp_path / "usb"))
