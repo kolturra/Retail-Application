@@ -147,5 +147,18 @@
   "print.warranty": "Warranty till",
   "print.thanks": "Thank you! Visit again.",
   "tax.taxable": "Taxable value",
-  "whatsapp.more": "…and {count} more items"
+  "whatsapp.more": "…and {count} more items",
+  "bills.type": "Type",
+  "bills.sale": "Sale",
+  "bills.return": "Return",
+  "bills.print": "Print / Preview",
+  "bills.pdf": "Save as PDF",
+  "bills.whatsapp": "Send on WhatsApp",
+  "bills.return_items": "Return items",
+  "bills.refund_mode": "Refund by",
+  "bills.returned": "Returned",
+  "bills.remaining": "Left to return",
+  "wa.phone_prompt": "Customer's WhatsApp number",
+  "wa.no_phone": "That is not a usable phone number.",
+  "counter.print_last": "Print last bill"
 }

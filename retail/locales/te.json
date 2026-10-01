@@ -147,5 +147,18 @@
   "print.warranty": "వారంటీ వరకు",
   "print.thanks": "ధన్యవాదాలు! మళ్లీ రండి.",
   "tax.taxable": "పన్ను విధించదగిన విలువ",
-  "whatsapp.more": "…ఇంకా {count} వస్తువులు"
+  "whatsapp.more": "…ఇంకా {count} వస్తువులు",
+  "bills.type": "రకం",
+  "bills.sale": "అమ్మకం",
+  "bills.return": "వాపసు",
+  "bills.print": "ప్రింట్ / ప్రివ్యూ",
+  "bills.pdf": "PDF గా సేవ్ చేయండి",
+  "bills.whatsapp": "WhatsApp లో పంపండి",
+  "bills.return_items": "సరుకులు వాపసు తీసుకోండి",
+  "bills.refund_mode": "రీఫండ్ విధానం",
+  "bills.returned": "వాపసు అయినది",
+  "bills.remaining": "వాపసు మిగిలినది",
+  "wa.phone_prompt": "కస్టమర్ WhatsApp నంబర్",
+  "wa.no_phone": "ఇది సరైన ఫోన్ నంబర్ కాదు.",
+  "counter.print_last": "చివరి బిల్లు ప్రింట్ చేయండి"
 }

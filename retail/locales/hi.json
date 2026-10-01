@@ -147,5 +147,18 @@
   "print.warranty": "वारंटी तक",
   "print.thanks": "धन्यवाद! फिर पधारें।",
   "tax.taxable": "करयोग्य मूल्य",
-  "whatsapp.more": "…और {count} वस्तुएँ"
+  "whatsapp.more": "…और {count} वस्तुएँ",
+  "bills.type": "प्रकार",
+  "bills.sale": "बिक्री",
+  "bills.return": "वापसी",
+  "bills.print": "प्रिंट / प्रीव्यू",
+  "bills.pdf": "PDF के रूप में सहेजें",
+  "bills.whatsapp": "WhatsApp पर भेजें",
+  "bills.return_items": "सामान वापस लें",
+  "bills.refund_mode": "रिफ़ंड का तरीका",
+  "bills.returned": "वापस हुआ",
+  "bills.remaining": "वापसी बाकी",
+  "wa.phone_prompt": "ग्राहक का WhatsApp नंबर",
+  "wa.no_phone": "यह उपयोगी फ़ोन नंबर नहीं है।",
+  "counter.print_last": "पिछला बिल प्रिंट करें"
 }

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderV
 from retail import segments
 from retail.i18n import tr
 from retail.services import billing, items
-from retail_ui import fmt
+from retail_ui import fmt, print_ui
 from retail_ui.errors import show_error
 from retail_ui.screens import counter_dialogs as dialogs
 from retail_ui.screens.counter_logic import CounterController
@@ -56,6 +56,7 @@ class CounterScreen(Screen):
         self.held_button = self._button("counter.held", " (F4)", self.show_held, row)
         self.discard_button = self._button("counter.discard", " (F8)", self.discard_bill, row)
         self.delete_button = self._button("counter.delete_line", " (F6)", self.delete_selected_line, row)
+        self.print_button = self._button("counter.print_last", " (F10)", self.print_last, row)
         self.pay_button = self._button("counter.pay", " (F12)", self.pay, row)
         self.pay_button.setStyleSheet("font-weight: bold; padding: 8px 18px;")
         layout.addLayout(row)
@@ -64,7 +65,7 @@ class CounterScreen(Screen):
         self.shortcut_keys = {}
         for key, handler in (("F2", self.pick_customer), ("F3", self.hold_bill), ("F4", self.show_held),
                              ("F5", self.apply_discount), ("F6", self.delete_selected_line),
-                             ("F8", self.discard_bill), ("Del", self.delete_selected_line), ("F12", self.pay)):
+                             ("F8", self.discard_bill), ("F10", self.print_last), ("Del", self.delete_selected_line), ("F12", self.pay)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(handler)
             self.shortcut_keys[key] = shortcut
@@ -106,8 +107,9 @@ class CounterScreen(Screen):
         for widget in (self.entry, self.customer_button, self.discount_button, self.hold_button,
                        self.held_button, self.discard_button, self.delete_button, self.pay_button):
             widget.setEnabled(not read_only)
-        for shortcut in self.shortcut_keys.values():      # none is read-only safe today
-            shortcut.setEnabled(not read_only)
+        for key, shortcut in self.shortcut_keys.items():
+            if key != "F10":                              # printing the last bill is read-only safe
+                shortcut.setEnabled(not read_only)
 
     # --- input -----------------------------------------------------------------
     def _on_enter(self):
@@ -209,6 +211,10 @@ class CounterScreen(Screen):
                 self.controller.discard()
         self._guarded(run)
 
+    def print_last(self):
+        if self.last_bill_id is not None:
+            self._guarded(lambda: print_ui.preview_bill(self, self.session, self.last_bill_id))
+
     def pay(self):
         def run():
             detail = self.controller.detail()
@@ -223,6 +229,8 @@ class CounterScreen(Screen):
             self.last_bill_id = bill_id
             self.status_label.setText(tr("counter.saved", bill_no=bill_no))
             self.sale_completed.emit(bill_id)
+            if self.session.settings.auto_print:
+                print_ui.preview_bill(self, self.session, bill_id)
         self._guarded(run)
 
     # --- drawing -----------------------------------------------------------------

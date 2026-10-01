@@ -220,7 +220,8 @@ def test_read_only_disables_the_write_controls(screen):
     for name in ("entry", "customer_button", "discount_button", "hold_button", "held_button",
                  "discard_button", "delete_button", "pay_button"):
         assert not getattr(screen, name).isEnabled(), name
-    assert all(not sc.isEnabled() for sc in screen.shortcut_keys.values())
+    assert all(not sc.isEnabled() for key, sc in screen.shortcut_keys.items() if key != "F10")
+    assert screen.print_button.isEnabled() and screen.shortcut_keys["F10"].isEnabled()
     screen.apply_read_only(False)
     assert screen.entry.isEnabled() and screen.pay_button.isEnabled()
     assert all(sc.isEnabled() for sc in screen.shortcut_keys.values())
@@ -269,7 +270,7 @@ def test_discount_applies_to_the_last_line_right_after_a_scan(screen):
 
 
 def test_function_key_shortcuts_are_registered(screen):
-    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F6", "F8", "Del", "F12"}
+    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F6", "F8", "F10", "Del", "F12"}
 
 
 def test_refresh_after_a_restore_follows_the_new_connection(make_session, qtbot):
@@ -300,3 +301,31 @@ def test_refresh_after_a_restore_clears_a_bill_id_missing_from_the_restored_data
     session.restore_from(snapshot)
     sc.refresh()
     assert sc.controller.bill_id is None and sc.model.rowCount() == 0
+
+
+def test_print_last_opens_the_preview_for_the_last_bill(screen, monkeypatch):
+    from retail_ui.screens import counter as counter_module
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    printed = []
+    monkeypatch.setattr(counter_module.print_ui, "preview_bill", lambda parent, session, bid: printed.append(bid))
+    screen.print_last()
+    assert printed == []                                          # nothing sold yet
+    type_and_enter(screen, "8901")
+    screen._ask_payments = lambda total, party_id: [("cash", total)]
+    screen.pay()
+    assert printed == []                                          # auto-print is off by default
+    screen.print_last()
+    assert printed == [screen.last_bill_id]
+
+
+def test_auto_print_previews_every_completed_sale(screen, monkeypatch):
+    from retail_ui.screens import counter as counter_module
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    screen.session.settings.auto_print = True
+    printed = []
+    monkeypatch.setattr(counter_module.print_ui, "preview_bill", lambda parent, session, bid: printed.append(bid))
+    type_and_enter(screen, "8901")
+    screen._ask_payments = lambda total, party_id: [("cash", total)]
+    screen.pay()
+    assert printed == [screen.last_bill_id]
+
