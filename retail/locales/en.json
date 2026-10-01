@@ -146,5 +146,6 @@
   "print.paid_by": "Paid by",
   "print.warranty": "Warranty till",
   "print.thanks": "Thank you! Visit again.",
-  "tax.taxable": "Taxable value"
+  "tax.taxable": "Taxable value",
+  "whatsapp.more": "…and {count} more items"
 }

@@ -146,5 +146,6 @@
   "print.paid_by": "చెల్లింపు విధానం",
   "print.warranty": "వారంటీ వరకు",
   "print.thanks": "ధన్యవాదాలు! మళ్లీ రండి.",
-  "tax.taxable": "పన్ను విధించదగిన విలువ"
+  "tax.taxable": "పన్ను విధించదగిన విలువ",
+  "whatsapp.more": "…ఇంకా {count} వస్తువులు"
 }

@@ -146,5 +146,6 @@
   "print.paid_by": "भुगतान का तरीका",
   "print.warranty": "वारंटी तक",
   "print.thanks": "धन्यवाद! फिर पधारें।",
-  "tax.taxable": "करयोग्य मूल्य"
+  "tax.taxable": "करयोग्य मूल्य",
+  "whatsapp.more": "…और {count} वस्तुएँ"
 }
