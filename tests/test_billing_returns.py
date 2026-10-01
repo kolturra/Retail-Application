@@ -1,6 +1,8 @@
 import pytest
 
-from retail.services import billing, items, parties, stock
+from retail import clock
+from retail.services import billing, items, parties, reports, stock
+from retail.services import shop as shop_svc
 from retail.services.billing import BillingError
 
 
@@ -132,7 +134,7 @@ def test_serial_return_restocks_unit_clears_warranty_and_allows_resale(shop_conn
     pytest.param(lambda lid: [(float(lid), 1000)], id="float-line-id"),
     pytest.param(lambda lid: [(lid, 1000, 1)], id="triple"),
     pytest.param(lambda lid: [lid], id="bare-int"),
-    pytest.param(lambda lid: [[lid, 1000]], id="list-pair"),
+    pytest.param(lambda lid: [{lid: 1000}], id="dict-entry"),
 ])
 def test_return_entries_must_be_pairs_of_plain_ints(shop_conn, make):
     soap, bill_id, line_id = sold_soaps(shop_conn)
@@ -250,3 +252,145 @@ def test_original_bill_lines_and_payments_are_unchanged_by_a_return(shop_conn):
     billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
     billing.create_return(shop_conn, bill_id, [(line_id, 2000)])
     assert snap() == before
+
+
+# --- final fix wave: return taxes from the original sale, refunds never negative ---------------
+
+def _today():
+    return clock.today().isoformat()
+
+
+def _multi_line_bill(conn, prices, gst_bp=0, party_id=None):
+    bill_id = billing.start_bill(conn, party_id=party_id)
+    line_ids = []
+    for n, price in enumerate(prices):
+        it = items.create_item(conn, name=f"I{n}", sell_price_paise=price, gst_rate_bp=gst_bp)
+        stock.record(conn, it, 10_000, "opening")
+        line_ids.append(billing.add_line(conn, bill_id, it, 1000))
+    total = billing.get_bill(conn, bill_id)["bill"]["total_paise"]
+    billing.finalize(conn, bill_id, [("cash", total)])
+    return bill_id, line_ids, total
+
+
+def _returns_of(conn, bill_id):
+    return conn.execute(
+        "SELECT * FROM bill WHERE ref_bill_id = ? AND kind = 'sale_return' ORDER BY id", (bill_id,)
+    ).fetchall()
+
+
+def test_line_by_line_returns_never_refund_negative_or_more_than_paid(shop_conn):
+    bill_id, line_ids, total = _multi_line_bill(shop_conn, [1050, 1050, 40])
+    assert total == 2100
+    for line_id in line_ids:
+        billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    rets = _returns_of(shop_conn, bill_id)
+    assert [r["total_paise"] for r in rets] == [1100, 1000, 0]
+    for r in rets:
+        assert r["total_paise"] >= 0
+        assert abs(r["round_off_paise"]) <= 50
+        line_sum = shop_conn.execute(
+            "SELECT SUM(total_paise) FROM bill_line WHERE bill_id = ?", (r["id"],)).fetchone()[0]
+        assert r["round_off_paise"] == r["total_paise"] - line_sum
+    assert _refunds(shop_conn, bill_id) == total
+    assert shop_conn.execute(
+        "SELECT COUNT(*) FROM payment WHERE bill_id = ?", (rets[-1]["id"],)).fetchone()[0] == 0
+    s = reports.daily_summary(shop_conn, _today())
+    assert s["net_paise"] == 0 and s["returns_paise"] == total
+    assert sum(s["by_mode"].values()) == s["net_paise"]
+    assert all(v >= 0 for v in s["by_mode"].values())
+    register = reports.sales_register(shop_conn, _today(), _today())
+    assert sum(r["total_paise"] for r in register) == 0
+
+
+def test_completing_return_after_a_rounded_up_partial_settles_exactly(shop_conn):
+    # 1025 + 1025 + 90 = 2140 -> paid 2100. Returning the first two together rounds 2050 up to 2100,
+    # so the last 90-paise line refunds nothing: its round-off is -90 (original -40 minus the +50
+    # the earlier return was rounded up by). Refunds still sum exactly to what was paid.
+    bill_id, line_ids, total = _multi_line_bill(shop_conn, [1025, 1025, 90])
+    assert total == 2100
+    billing.create_return(shop_conn, bill_id, [(line_ids[0], 1000), (line_ids[1], 1000)])
+    billing.create_return(shop_conn, bill_id, [(line_ids[2], 1000)])
+    rets = _returns_of(shop_conn, bill_id)
+    assert [r["total_paise"] for r in rets] == [2100, 0]
+    assert rets[1]["round_off_paise"] == -90
+    assert _refunds(shop_conn, bill_id) == total
+
+
+def test_return_uses_original_tax_even_if_price_inclusivity_changes(shop_conn):
+    item = items.create_item(shop_conn, name="Shirt", sell_price_paise=10000, gst_rate_bp=1800)
+    stock.record(shop_conn, item, 5_000, "opening")
+    bill_id = billing.start_bill(shop_conn)
+    line_id = billing.add_line(shop_conn, bill_id, item, 1000)
+    billing.finalize(shop_conn, bill_id, [("cash", 10000)])
+    orig_line = billing.get_bill(shop_conn, bill_id)["lines"][0]
+    assert (orig_line["taxable_paise"], orig_line["cgst_paise"] + orig_line["sgst_paise"]) == (8475, 1525)
+    shop_svc.setup_shop(shop_conn, name="Test Shop", state_code="36", price_includes_gst=False)
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    got = billing.get_bill(shop_conn, ret)
+    r, rl = got["bill"], got["lines"][0]
+    assert (rl["taxable_paise"], rl["cgst_paise"], rl["sgst_paise"], rl["igst_paise"], rl["total_paise"]) == (
+        orig_line["taxable_paise"], orig_line["cgst_paise"], orig_line["sgst_paise"], 0, 10000)
+    assert (r["taxable_paise"], r["total_paise"], r["round_off_paise"]) == (8475, 10000, 0)
+    for row in reports.gst_summary(shop_conn, _today(), _today()):
+        assert (row["taxable_paise"], row["cgst_paise"], row["sgst_paise"], row["igst_paise"]) == (0, 0, 0, 0)
+    s = reports.daily_summary(shop_conn, _today())
+    assert s["net_paise"] == 0 and sum(s["by_mode"].values()) == 0
+
+
+def test_partial_returns_split_original_components_without_drift(shop_conn):
+    item = items.create_item(shop_conn, name="Oil", sell_price_paise=10033, gst_rate_bp=500)
+    stock.record(shop_conn, item, 10_000, "opening")
+    bill_id = billing.start_bill(shop_conn)
+    line_id = billing.add_line(shop_conn, bill_id, item, 3000)
+    total = billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"]
+    billing.finalize(shop_conn, bill_id, [("cash", total)])
+    orig = billing.get_bill(shop_conn, bill_id)["lines"][0]
+    shop_svc.setup_shop(shop_conn, name="Test Shop", state_code="36", price_includes_gst=False)
+    for _ in range(3):
+        billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    cols = ("amount_paise", "taxable_paise", "cgst_paise", "sgst_paise", "igst_paise", "total_paise")
+    sums = shop_conn.execute(
+        f"SELECT {', '.join('SUM(' + c + ')' for c in cols)} FROM bill_line WHERE ref_line_id = ?",
+        (line_id,)).fetchone()
+    assert tuple(sums) == tuple(orig[c] for c in cols)
+    assert _refunds(shop_conn, bill_id) == total
+    for row in reports.gst_summary(shop_conn, _today(), _today()):
+        assert (row["taxable_paise"], row["cgst_paise"], row["sgst_paise"], row["igst_paise"]) == (0, 0, 0, 0)
+
+
+def test_party_state_change_after_sale_keeps_cgst_sgst_on_return(shop_conn):
+    ravi = parties.create_party(shop_conn, name="Ravi", state_code="36")
+    soap = items.create_item(shop_conn, name="Soap", sell_price_paise=11800, gst_rate_bp=1800)
+    stock.record(shop_conn, soap, 5_000, "opening")
+    bill_id = billing.start_bill(shop_conn, party_id=ravi)
+    line_id = billing.add_line(shop_conn, bill_id, soap, 2000)
+    billing.finalize(shop_conn, bill_id, [("cash", 23600)])
+    shop_conn.execute("UPDATE party SET state_code = '27' WHERE id = ?", (ravi,))
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    r = billing.get_bill(shop_conn, ret)["bill"]
+    assert (r["cgst_paise"], r["sgst_paise"], r["igst_paise"], r["total_paise"]) == (900, 900, 0, 11800)
+
+
+def test_estimate_bill_return_carries_zero_tax(shop_conn):
+    shop_svc.setup_shop(shop_conn, name="Small", state_code="36", gst_enabled=False)
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=2000)
+    shop_svc.setup_shop(shop_conn, name="Small", state_code="36", gst_enabled=True)
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    r = billing.get_bill(shop_conn, ret)["bill"]
+    assert (r["gst_mode"], r["taxable_paise"], r["cgst_paise"], r["sgst_paise"], r["total_paise"]) == (
+        "estimate", 11800, 0, 0, 11800)
+
+
+def test_generator_returns_are_accepted_and_empty_generator_writes_nothing(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=2000)
+    with pytest.raises(BillingError):
+        billing.create_return(shop_conn, bill_id, (x for x in []))
+    assert shop_conn.execute("SELECT COUNT(*) FROM bill WHERE kind='sale_return'").fetchone()[0] == 0
+    ret = billing.create_return(shop_conn, bill_id, ((lid, q) for lid, q in [(line_id, 1000)]))
+    assert billing.get_bill(shop_conn, ret)["bill"]["total_paise"] == 11800
+
+
+def test_list_pairs_are_accepted(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=2000)
+    ret = billing.create_return(shop_conn, bill_id, [[line_id, 1000]])
+    assert billing.get_bill(shop_conn, ret)["bill"]["total_paise"] == 11800

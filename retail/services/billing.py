@@ -9,6 +9,9 @@ from retail.services import audit, gst, shop, stock
 
 PAYMENT_MODES = ("cash", "upi", "card", "emi", "credit")
 REFUND_MODES = ("cash", "upi", "card", "credit")
+# Per-line money columns a return copies (pro-rata) from the original sale line.
+_RETURN_COMPONENTS = ("amount_paise", "taxable_paise", "cgst_paise", "sgst_paise", "igst_paise",
+                      "total_paise")
 
 
 class BillingError(ValueError):
@@ -308,13 +311,19 @@ def finalize(conn, bill_id, payments, *, today=None):
 
 @writes
 def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
-    """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill."""
+    """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill.
+
+    Taxes are never recomputed from current shop/party settings: each return line takes its
+    taxable/CGST/SGST/IGST/total from the ORIGINAL line's stored components (pro-rata for a part,
+    original minus earlier returns for the quantity that completes the line), so a full reversal
+    always nets the original sale to zero in the GST reports."""
     if refund_mode not in REFUND_MODES:
         raise BillingError(f"refund_mode must be one of {REFUND_MODES}")
+    returns = list(returns)  # a generator must not be silently exhausted by validation
     if not returns:
         raise BillingError("Nothing to return")
     for entry in returns:
-        if (not isinstance(entry, tuple) or len(entry) != 2
+        if (type(entry) not in (tuple, list) or len(entry) != 2
                 or type(entry[0]) is not int or type(entry[1]) is not int):
             raise BillingError("Each return must be a (line_id, qty_milli) pair of whole numbers")
     line_ids = [line_id for line_id, _ in returns]
@@ -341,7 +350,8 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
             if ol is None:
                 raise BillingError("That line is not on the original bill")
             done = conn.execute(
-                """SELECT COALESCE(SUM(l.qty_milli), 0) AS q, COALESCE(SUM(l.amount_paise), 0) AS a
+                f"""SELECT COALESCE(SUM(l.qty_milli), 0) AS qty_milli,
+                          {', '.join(f'COALESCE(SUM(l.{c}), 0) AS {c}' for c in _RETURN_COMPONENTS)}
                    FROM bill_line l JOIN bill b ON b.id = l.bill_id
                    WHERE l.ref_line_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
                 (line_id,),
@@ -351,25 +361,50 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
             ).fetchone()["tracking"]
             if item_tracking == "serial" and qty != ol["qty_milli"]:
                 raise BillingError("Serial items must be returned whole")
-            remaining = ol["qty_milli"] - done["q"]
+            remaining = ol["qty_milli"] - done["qty_milli"]
             if qty > remaining:
                 raise BillingError("Cannot return more than was sold")
             if qty == remaining:
-                amount = ol["amount_paise"] - done["a"]  # settle exactly, no rounding drift
+                # settle exactly, no rounding drift: original minus everything returned before
+                part = {c: ol[c] - done[c] for c in _RETURN_COMPONENTS}
             else:
-                amount = (2 * ol["amount_paise"] * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
+                part = {c: (2 * ol[c] * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
+                        for c in _RETURN_COMPONENTS}
+            # Inserting into a still-held bill is allowed by the immutability triggers.
             conn.execute(
                 """INSERT INTO bill_line(bill_id, item_id, unit_id, ref_line_id, qty_milli, rate_paise,
-                       discount_paise, amount_paise, gst_rate_bp) VALUES (?,?,?,?,?,?,0,?,?)""",
-                (return_id, ol["item_id"], ol["unit_id"], line_id, qty, ol["rate_paise"], amount,
-                 ol["gst_rate_bp"]),
+                       discount_paise, amount_paise, gst_rate_bp, taxable_paise, cgst_paise,
+                       sgst_paise, igst_paise, total_paise) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,?)""",
+                (return_id, ol["item_id"], ol["unit_id"], line_id, qty, ol["rate_paise"],
+                 part["amount_paise"], ol["gst_rate_bp"], part["taxable_paise"], part["cgst_paise"],
+                 part["sgst_paise"], part["igst_paise"], part["total_paise"]),
             )
-        _retax(conn, return_id)  # while still held: lines are frozen once the bill is final
-        # Rounding policy: every return bill is rounded to the rupee like any bill, so a partial
-        # return may differ from a pro-rata share of the original by up to 50 paise. The return
-        # that COMPLETES the original (every original line fully returned cumulatively) instead
-        # settles to original total - earlier final return totals, so cumulative refunds equal
-        # exactly what the customer paid. Done while still held so the immutability triggers allow it.
+        # Refund policy (all computed while the return is still held, before the single
+        # held -> final update):
+        #   line_sum    = this return's line totals (taken from the original sale's tax split)
+        #   prior_total = refunds of earlier final returns of this bill; prior_lines = their line totals
+        #   target      = original total if this return completes the bill (every original line fully
+        #                 returned, counting this return), else
+        #                 min(round_to_rupee(prior_lines + line_sum), original total)
+        #   refund      = max(target - prior_total, 0); round_off = refund - line_sum
+        # So a refund is never negative, cumulative refunds never exceed what the customer paid,
+        # and once everything is back they equal it exactly. A partial return's round-off stays
+        # within +/-50 paise; the completing one can reach about +/-1 rupee (the original bill's
+        # round-off plus the rounding already given on earlier returns).
+        taxable, cgst, sgst, igst, line_sum = conn.execute(
+            """SELECT COALESCE(SUM(taxable_paise), 0), COALESCE(SUM(cgst_paise), 0),
+                      COALESCE(SUM(sgst_paise), 0), COALESCE(SUM(igst_paise), 0),
+                      COALESCE(SUM(total_paise), 0)
+               FROM bill_line WHERE bill_id = ?""",
+            (return_id,),
+        ).fetchone()
+        prior_total, prior_lines = conn.execute(
+            """SELECT COALESCE(SUM(b.total_paise), 0),
+                      COALESCE(SUM((SELECT COALESCE(SUM(l.total_paise), 0) FROM bill_line l
+                                    WHERE l.bill_id = b.id)), 0)
+               FROM bill b WHERE b.ref_bill_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
+            (original_bill_id,),
+        ).fetchone()
         outstanding = conn.execute(
             """SELECT COUNT(*) FROM bill_line ol
                WHERE ol.bill_id = ? AND ol.qty_milli != (
@@ -379,20 +414,15 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
             (original_bill_id, return_id),
         ).fetchone()[0]
         if outstanding == 0:
-            prior = conn.execute(
-                """SELECT COALESCE(SUM(total_paise), 0) FROM bill
-                   WHERE ref_bill_id = ? AND kind = 'sale_return' AND status = 'final'""",
-                (original_bill_id,),
-            ).fetchone()[0]
-            line_sum = conn.execute(
-                "SELECT COALESCE(SUM(total_paise), 0) FROM bill_line WHERE bill_id = ?", (return_id,)
-            ).fetchone()[0]
-            settle = orig["total_paise"] - prior
-            conn.execute(
-                "UPDATE bill SET total_paise = ?, round_off_paise = ? WHERE id = ?",
-                (settle, settle - line_sum, return_id),
-            )
-        total = conn.execute("SELECT total_paise FROM bill WHERE id = ?", (return_id,)).fetchone()[0]
+            target = orig["total_paise"]
+        else:
+            target = min(money.round_to_rupee(prior_lines + line_sum)[0], orig["total_paise"])
+        total = max(target - prior_total, 0)
+        conn.execute(
+            """UPDATE bill SET taxable_paise=?, cgst_paise=?, sgst_paise=?, igst_paise=?,
+                   round_off_paise=?, total_paise=? WHERE id = ?""",
+            (taxable, cgst, sgst, igst, total - line_sum, total, return_id),
+        )
         bill_no = _next_number(conn, "sale_return", "R")
         lines = conn.execute(
             """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
