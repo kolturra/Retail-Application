@@ -33,6 +33,13 @@ def _item(conn, item_id):
     return row
 
 
+def _check_party(conn, party_id):
+    if party_id is not None and conn.execute(
+        "SELECT 1 FROM party WHERE id = ?", (party_id,)
+    ).fetchone() is None:
+        raise BillingError("No such party")
+
+
 def _next_number(conn, name, prefix):
     conn.execute(
         "INSERT INTO counter(name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1",
@@ -77,9 +84,42 @@ def _retax(conn, bill_id):
     )
 
 
+def _batch_remaining(conn, bill_id, unit_id):
+    on_bill = conn.execute(
+        "SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND unit_id = ?",
+        (bill_id, unit_id),
+    ).fetchone()[0]
+    return stock.unit_on_hand(conn, unit_id) - on_bill
+
+
+def _choose_batch(conn, bill_id, item_id, qty_milli, unit_id, policy):
+    """Pick or validate the batch for a line. A line is never split across batches."""
+    if unit_id is not None:
+        if conn.execute(
+            "SELECT 1 FROM stock_unit WHERE id = ? AND item_id = ? AND serial IS NULL AND batch_no IS NOT NULL",
+            (unit_id, item_id),
+        ).fetchone() is None:
+            raise BillingError("That batch does not belong to this item")
+        if _batch_remaining(conn, bill_id, unit_id) < qty_milli and policy == "block":
+            raise stock.InsufficientStock("Not enough stock in that batch")
+        return unit_id
+    candidates = stock.batches_in_expiry_order(conn, item_id)
+    remaining = {u: _batch_remaining(conn, bill_id, u) for u in candidates}
+    for u in candidates:
+        if remaining[u] >= qty_milli:
+            return u
+    if policy == "block":
+        raise stock.InsufficientStock("No single batch has enough stock")
+    for u in candidates:
+        if remaining[u] > 0:
+            return u
+    raise BillingError("No batch in stock for this item")
+
+
 @writes
 def start_bill(conn, *, party_id=None):
     s = shop.get_shop(conn)
+    _check_party(conn, party_id)
     with transaction(conn):
         cur = conn.execute(
             "INSERT INTO bill(kind, status, party_id, gst_mode, created_at) VALUES ('sale','held',?,?,?)",
@@ -123,21 +163,14 @@ def add_line(conn, bill_id, item_id, qty_milli=1000, *, serial=None, unit_id=Non
             unit_id = unit["id"]
         else:
             if tracking == "batch":
-                if unit_id is None:
-                    unit_id = stock.pick_batch(conn, item_id)
-                if unit_id is None:
-                    raise BillingError("No batch in stock for this item")
-                if conn.execute(
-                    "SELECT 1 FROM stock_unit WHERE id = ? AND item_id = ?", (unit_id, item_id)
-                ).fetchone() is None:
-                    raise BillingError("That batch does not belong to this item")
+                unit_id = _choose_batch(conn, bill_id, item_id, qty_milli, unit_id, s["oversell_policy"])
             else:
                 unit_id = None
-            already = conn.execute(
-                "SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND item_id = ?",
-                (bill_id, item_id),
-            ).fetchone()[0]
-            stock.check_available(conn, item_id, already + qty_milli, s["oversell_policy"])
+                already = conn.execute(
+                    "SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND item_id = ?",
+                    (bill_id, item_id),
+                ).fetchone()[0]
+                stock.check_available(conn, item_id, already + qty_milli, s["oversell_policy"])
         rate = item["sell_price_paise"] if rate_paise is None else rate_paise
         if rate < 0:
             raise BillingError("Rate cannot be negative")
@@ -167,6 +200,7 @@ def remove_line(conn, bill_id, line_id):
 def set_party(conn, bill_id, party_id):
     with transaction(conn):
         _bill(conn, bill_id, status="held")
+        _check_party(conn, party_id)
         conn.execute("UPDATE bill SET party_id = ? WHERE id = ?", (party_id, bill_id))
         _retax(conn, bill_id)
 

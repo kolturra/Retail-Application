@@ -79,3 +79,16 @@ def test_add_unit_unknown_item_is_not_reported_as_duplicate_serial(shop_conn):
     with pytest.raises(sqlite3.IntegrityError) as exc:
         stock.add_unit(shop_conn, 9999, serial="X1")
     assert not isinstance(exc.value, stock.DuplicateSerial)
+
+
+def test_batches_in_expiry_order_skips_empty_and_puts_no_expiry_last(shop_conn):
+    from retail.services import items, stock
+    it = items.create_item(shop_conn, name="Milk", sell_price_paise=100, tracking="batch")
+    none_exp = stock.add_unit(shop_conn, it, batch_no="N")
+    late = stock.add_unit(shop_conn, it, batch_no="L", expiry="2026-12-01")
+    early = stock.add_unit(shop_conn, it, batch_no="E", expiry="2026-10-01")
+    empty = stock.add_unit(shop_conn, it, batch_no="X", expiry="2026-09-01")
+    for u in (none_exp, late, early):
+        stock.record(shop_conn, it, 1_000, "purchase", unit_id=u)
+    assert stock.batches_in_expiry_order(shop_conn, it) == [early, late, none_exp]
+    assert empty not in stock.batches_in_expiry_order(shop_conn, it)

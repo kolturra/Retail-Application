@@ -91,6 +91,18 @@ def pick_batch(conn, item_id):
     return row["id"] if row else None
 
 
+def batches_in_expiry_order(conn, item_id):
+    """Unit ids of batches with positive stock, earliest expiry first (no expiry last, then id)."""
+    rows = conn.execute(
+        """SELECT u.id FROM stock_unit u
+           WHERE u.item_id = ? AND u.serial IS NULL AND u.batch_no IS NOT NULL
+             AND (SELECT COALESCE(SUM(qty_milli), 0) FROM stock_movement WHERE unit_id = u.id) > 0
+           ORDER BY (u.expiry IS NULL), u.expiry, u.id""",
+        (item_id,),
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
 def check_available(conn, item_id, qty_milli, policy):
     """Return 'ok' or 'warn'; raise InsufficientStock when the policy is 'block'."""
     have = on_hand(conn, item_id)

@@ -191,3 +191,121 @@ def test_add_line_rejects_non_int_numeric_arguments(shop_conn, soap, kwargs):
     with pytest.raises(BillingError):
         billing.add_line(shop_conn, bill_id, soap, **kwargs)
     assert billing.get_bill(shop_conn, bill_id)["lines"] == []
+
+
+def _batch_item(conn, policy="block"):
+    shop.setup_shop(conn, name="S", state_code="36", oversell_policy=policy)
+    milk = items.create_item(conn, name="Milk", sell_price_paise=100, tracking="batch")
+    early = stock.add_unit(conn, milk, batch_no="B", expiry="2026-10-01")
+    late = stock.add_unit(conn, milk, batch_no="A", expiry="2026-12-01")
+    stock.record(conn, milk, 2_000, "purchase", unit_id=early)
+    stock.record(conn, milk, 5_000, "purchase", unit_id=late)
+    return milk, early, late
+
+
+def test_block_policy_rejects_line_larger_than_any_single_batch(shop_conn):
+    milk, _, _ = _batch_item(shop_conn)  # 7 in total but max 5 in one batch
+    bill_id = billing.start_bill(shop_conn)
+    with pytest.raises(stock.InsufficientStock):
+        billing.add_line(shop_conn, bill_id, milk, 6000)
+
+
+def test_block_policy_counts_batch_quantity_already_on_the_bill(shop_conn):
+    milk, early, _ = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    billing.add_line(shop_conn, bill_id, milk, 2000, unit_id=early)
+    with pytest.raises(stock.InsufficientStock):
+        billing.add_line(shop_conn, bill_id, milk, 1000, unit_id=early)
+
+
+def test_auto_pick_moves_to_next_batch_when_first_is_used_up(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    first = billing.add_line(shop_conn, bill_id, milk, 2000)
+    second = billing.add_line(shop_conn, bill_id, milk, 1000)
+    by_id = {ln["id"]: ln["unit_id"] for ln in billing.get_bill(shop_conn, bill_id)["lines"]}
+    assert (by_id[first], by_id[second]) == (early, late)
+
+
+def test_warn_policy_allows_selling_beyond_a_batch(shop_conn):
+    milk, early, late = _batch_item(shop_conn, policy="warn")
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 9000)
+    assert billing.get_bill(shop_conn, bill_id)["lines"][0]["unit_id"] == early
+    assert line
+    assert billing.add_line(shop_conn, bill_id, milk, 1000, unit_id=late)
+
+
+def test_supplied_unit_must_be_a_batch_of_the_same_item(shop_conn):
+    milk, _, _ = _batch_item(shop_conn)
+    phone = items.create_item(shop_conn, name="Phone", sell_price_paise=100000, tracking="serial")
+    serial_unit = add_phone(shop_conn, phone, "IMEI9")
+    other = items.create_item(shop_conn, name="Curd", sell_price_paise=100, tracking="batch")
+    other_unit = stock.add_unit(shop_conn, other, batch_no="C")
+    stock.record(shop_conn, other, 5_000, "purchase", unit_id=other_unit)
+    bill_id = billing.start_bill(shop_conn)
+    for bad in (serial_unit, other_unit):
+        with pytest.raises(BillingError):
+            billing.add_line(shop_conn, bill_id, milk, 1000, unit_id=bad)
+
+
+def test_party_must_exist(shop_conn, soap):
+    with pytest.raises(BillingError, match="No such party"):
+        billing.start_bill(shop_conn, party_id=999)
+    bill_id = billing.start_bill(shop_conn)
+    with pytest.raises(BillingError, match="No such party"):
+        billing.set_party(shop_conn, bill_id, 999)
+
+
+def test_cancelled_bill_rejects_further_changes(shop_conn, soap):
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, soap, 1000)
+    billing.cancel_held(shop_conn, bill_id)
+    with pytest.raises(BillingError):
+        billing.remove_line(shop_conn, bill_id, line)
+    with pytest.raises(BillingError):
+        billing.set_party(shop_conn, bill_id, None)
+    with pytest.raises(BillingError):
+        billing.cancel_held(shop_conn, bill_id)
+
+
+def test_cancel_held_writes_audit_row(shop_conn):
+    bill_id = billing.start_bill(shop_conn)
+    billing.cancel_held(shop_conn, bill_id)
+    row = shop_conn.execute(
+        "SELECT * FROM audit_log WHERE action = 'cancel_held' AND entity = 'bill'"
+    ).fetchone()
+    assert row is not None and row["entity_id"] == bill_id
+
+
+def test_mixed_rate_bill_totals_are_sum_of_lines_with_one_round_off(shop_conn):
+    a = items.create_item(shop_conn, name="A", sell_price_paise=11800, gst_rate_bp=1800)
+    b = items.create_item(shop_conn, name="B", sell_price_paise=10550, gst_rate_bp=500)
+    c = items.create_item(shop_conn, name="C", sell_price_paise=3333, gst_rate_bp=0)
+    bill_id = billing.start_bill(shop_conn)
+    for it in (a, b, c):
+        billing.add_line(shop_conn, bill_id, it, 1000)
+    data = billing.get_bill(shop_conn, bill_id)
+    bill, lines = data["bill"], data["lines"]
+    for col in ("taxable_paise", "cgst_paise", "sgst_paise", "igst_paise"):
+        assert bill[col] == sum(ln[col] for ln in lines)
+    line_sum = sum(ln["total_paise"] for ln in lines)
+    assert line_sum == 11800 + 10550 + 3333
+    assert bill["total_paise"] == 25700 and bill["round_off_paise"] == 25700 - line_sum
+    assert bill["total_paise"] % 100 == 0
+
+
+def test_gst_exclusive_total_is_taxable_plus_tax(shop_conn):
+    shop.setup_shop(shop_conn, name="S", state_code="36", price_includes_gst=False)
+    it = items.create_item(shop_conn, name="Soap", sell_price_paise=10000, gst_rate_bp=1800)
+    bill_id = billing.start_bill(shop_conn)
+    billing.add_line(shop_conn, bill_id, it, 1000)
+    assert totals(shop_conn, bill_id) == (10000, 900, 900, 0, 0, 11800)
+
+
+def test_clearing_party_switches_back_to_intra_state(shop_conn, soap):
+    pune = parties.create_party(shop_conn, name="Pune Traders", state_code="27")
+    bill_id = billing.start_bill(shop_conn, party_id=pune)
+    billing.add_line(shop_conn, bill_id, soap, 1000)
+    billing.set_party(shop_conn, bill_id, None)
+    assert totals(shop_conn, bill_id) == (10000, 900, 900, 0, 0, 11800)
