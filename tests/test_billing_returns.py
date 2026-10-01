@@ -1,6 +1,6 @@
 import pytest
 
-from retail import clock
+from retail import clock, guard
 from retail.services import billing, items, parties, reports, stock
 from retail.services import shop as shop_svc
 from retail.services.billing import BillingError
@@ -421,3 +421,42 @@ def test_partial_return_line_components_always_add_up(shop_conn, qty_sold, qty_b
                                 + b["igst_paise"] + b["round_off_paise"])
     if inter_state:
         assert b["cgst_paise"] == 0 and b["sgst_paise"] == 0
+
+
+def test_create_return_is_blocked_when_read_only(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn)
+    before_stock = stock.on_hand(shop_conn, soap)
+    before_bills = shop_conn.execute("SELECT COUNT(*) FROM bill").fetchone()[0]
+    guard.set_read_only(True)
+    with pytest.raises(guard.ReadOnlyError):
+        billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    # the guard must fire before any validation, so it is on create_return itself
+    with pytest.raises(guard.ReadOnlyError):
+        billing.create_return(shop_conn, 999_999, [])
+    guard.set_read_only(False)
+    assert shop_conn.execute("SELECT COUNT(*) FROM bill").fetchone()[0] == before_bills
+    assert stock.on_hand(shop_conn, soap) == before_stock
+
+
+@pytest.mark.parametrize("gst_on", [True, False])
+def test_three_single_unit_returns_add_up_and_refund_original_total(shop_conn, gst_on):
+    if not gst_on:
+        shop_svc.setup_shop(shop_conn, name="Small", state_code="36", gst_enabled=False)
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=3000)
+    if not gst_on:
+        shop_svc.setup_shop(shop_conn, name="Small", state_code="36", gst_enabled=True)
+    total = billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"]
+    refunds = []
+    for _ in range(3):
+        ret = billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+        detail = billing.get_bill(shop_conn, ret)
+        for line in detail["lines"]:
+            assert line["total_paise"] == (line["taxable_paise"] + line["cgst_paise"]
+                                           + line["sgst_paise"] + line["igst_paise"])
+            if not gst_on:
+                assert (line["cgst_paise"], line["sgst_paise"], line["igst_paise"]) == (0, 0, 0)
+        assert detail["bill"]["total_paise"] >= 0
+        refunds.append(shop_conn.execute(
+            "SELECT COALESCE(SUM(amount_paise), 0) FROM payment WHERE bill_id = ?", (ret,)).fetchone()[0])
+    assert all(r >= 0 for r in refunds)
+    assert sum(refunds) == total

@@ -309,7 +309,6 @@ def finalize(conn, bill_id, payments, *, today=None):
     return bill_no
 
 
-@writes
 def _return_part(ol, done, qty):
     """Money components of returning `qty` from original line `ol`, given what earlier final
     returns already took (`done`). The quantity that completes the line takes the exact remainder
@@ -333,6 +332,7 @@ def _return_part(ol, done, qty):
             "cgst_paise": cgst, "sgst_paise": sgst, "igst_paise": igst, "total_paise": total}
 
 
+@writes
 def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
     """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill.
 
