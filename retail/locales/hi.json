@@ -89,5 +89,14 @@
   "tpl.electronics": "इलेक्ट्रॉनिक्स / मोबाइल / उपकरण",
   "wiz.next": "आगे >",
   "wiz.back": "< पीछे",
-  "wiz.finish": "पूरा करें"
+  "wiz.finish": "पूरा करें",
+  "nav.counter": "काउंटर",
+  "nav.items": "वस्तुएँ",
+  "nav.stock": "स्टॉक और खरीद",
+  "nav.parties": "ग्राहक और सप्लायर",
+  "nav.bills": "बिल",
+  "nav.reports": "रिपोर्ट",
+  "nav.staff": "स्टाफ और खर्च",
+  "nav.settings": "सेटिंग्स",
+  "status.expires": "लाइसेंस {date} तक"
 }

@@ -89,5 +89,14 @@
   "tpl.electronics": "Electronics / Mobile / Appliances",
   "wiz.next": "Next >",
   "wiz.back": "< Back",
-  "wiz.finish": "Finish"
+  "wiz.finish": "Finish",
+  "nav.counter": "Counter",
+  "nav.items": "Items",
+  "nav.stock": "Stock & Purchases",
+  "nav.parties": "Customers & Suppliers",
+  "nav.bills": "Bills",
+  "nav.reports": "Reports",
+  "nav.staff": "Staff & Expenses",
+  "nav.settings": "Settings",
+  "status.expires": "Licensed until {date}"
 }

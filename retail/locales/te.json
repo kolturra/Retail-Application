@@ -89,5 +89,14 @@
   "tpl.electronics": "ఎలక్ట్రానిక్స్ / మొబైల్ / ఉపకరణాలు",
   "wiz.next": "తర్వాత >",
   "wiz.back": "< వెనుకకు",
-  "wiz.finish": "పూర్తి చేయండి"
+  "wiz.finish": "పూర్తి చేయండి",
+  "nav.counter": "కౌంటర్",
+  "nav.items": "వస్తువులు",
+  "nav.stock": "స్టాక్ & కొనుగోళ్లు",
+  "nav.parties": "కస్టమర్లు & సప్లయర్లు",
+  "nav.bills": "బిల్లులు",
+  "nav.reports": "రిపోర్టులు",
+  "nav.staff": "సిబ్బంది & ఖర్చులు",
+  "nav.settings": "సెట్టింగ్స్",
+  "status.expires": "లైసెన్స్ {date} వరకు"
 }
