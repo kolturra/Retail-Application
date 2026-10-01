@@ -220,12 +220,56 @@ def test_read_only_disables_the_write_controls(screen):
     for name in ("entry", "customer_button", "discount_button", "hold_button", "held_button",
                  "discard_button", "delete_button", "pay_button"):
         assert not getattr(screen, name).isEnabled(), name
+    assert all(not sc.isEnabled() for sc in screen.shortcut_keys.values())
     screen.apply_read_only(False)
     assert screen.entry.isEnabled() and screen.pay_button.isEnabled()
+    assert all(sc.isEnabled() for sc in screen.shortcut_keys.values())
+
+
+def test_f12_key_press_fires_pay(screen, qtbot):
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    type_and_enter(screen, "8901")
+    calls = []
+    screen._ask_payments = lambda total, party_id: calls.append(total)
+    screen.show()
+    qtbot.waitExposed(screen)
+    screen.activateWindow()
+    qtbot.waitUntil(lambda: screen.isActiveWindow(), timeout=1000)
+    qtbot.keyClick(screen.entry, Qt.Key.Key_F12)
+    assert calls == [11800]
+
+
+def test_shortcut_activation_calls_the_handler(screen):
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    type_and_enter(screen, "8901")
+    calls = []
+    screen._ask_payments = lambda total, party_id: calls.append(total)
+    screen.shortcut_keys["F12"].activated.emit()
+    assert calls == [11800]
+
+
+def test_last_row_is_selected_after_scans_and_after_delete(screen):
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    stocked(screen.session.conn, name="Tea", barcodes=["8902"], sell_price_paise=500, gst_rate_bp=0)
+    type_and_enter(screen, "8901")
+    type_and_enter(screen, "8902")
+    assert screen.table.selectionModel().selectedRows()[0].row() == 1
+    assert screen._selected_line_id() == screen.model.id_at(1)
+    screen.delete_selected_line()
+    assert screen.model.rowCount() == 1
+    assert screen.table.selectionModel().selectedRows()[0].row() == 0
+
+
+def test_discount_applies_to_the_last_line_right_after_a_scan(screen):
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    type_and_enter(screen, "8901")
+    screen._ask_discount = lambda max_paise: 1800
+    screen.apply_discount()
+    assert screen.model.data(screen.model.index(0, 3)) == "₹18.00"
 
 
 def test_function_key_shortcuts_are_registered(screen):
-    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F8", "Del", "F12"}
+    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F6", "F8", "Del", "F12"}
 
 
 def test_refresh_after_a_restore_follows_the_new_connection(make_session, qtbot):

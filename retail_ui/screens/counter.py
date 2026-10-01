@@ -55,7 +55,7 @@ class CounterScreen(Screen):
         self.hold_button = self._button("counter.hold", " (F3)", self.hold_bill, row)
         self.held_button = self._button("counter.held", " (F4)", self.show_held, row)
         self.discard_button = self._button("counter.discard", " (F8)", self.discard_bill, row)
-        self.delete_button = self._button("counter.delete_line", " (Del)", self.delete_selected_line, row)
+        self.delete_button = self._button("counter.delete_line", " (F6)", self.delete_selected_line, row)
         self.pay_button = self._button("counter.pay", " (F12)", self.pay, row)
         self.pay_button.setStyleSheet("font-weight: bold; padding: 8px 18px;")
         layout.addLayout(row)
@@ -63,8 +63,8 @@ class CounterScreen(Screen):
 
         self.shortcut_keys = {}
         for key, handler in (("F2", self.pick_customer), ("F3", self.hold_bill), ("F4", self.show_held),
-                             ("F5", self.apply_discount), ("F8", self.discard_bill),
-                             ("Del", self.delete_selected_line), ("F12", self.pay)):
+                             ("F5", self.apply_discount), ("F6", self.delete_selected_line),
+                             ("F8", self.discard_bill), ("Del", self.delete_selected_line), ("F12", self.pay)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(handler)
             self.shortcut_keys[key] = shortcut
@@ -106,6 +106,8 @@ class CounterScreen(Screen):
         for widget in (self.entry, self.customer_button, self.discount_button, self.hold_button,
                        self.held_button, self.discard_button, self.delete_button, self.pay_button):
             widget.setEnabled(not read_only)
+        for shortcut in self.shortcut_keys.values():      # none is read-only safe today
+            shortcut.setEnabled(not read_only)
 
     # --- input -----------------------------------------------------------------
     def _on_enter(self):
@@ -242,6 +244,8 @@ class CounterScreen(Screen):
                          fmt.rupees(line["total_paise"])))
             ids.append(line["id"])
         self.model.set_rows(rows, ids, right_cols=(1, 2, 3, 4, 5))
+        if rows:
+            self.table.selectRow(len(rows) - 1)
         bill = detail["bill"]
         self.total_label.setText(fmt.rupees(bill["total_paise"]))
         parts = []
