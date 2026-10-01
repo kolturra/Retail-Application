@@ -99,3 +99,92 @@ def parse_entry(text):
     if match:
         return money.qty_to_milli(match.group(1)), match.group(2)
     return 1000, (text or "").strip()
+
+
+_UPDATABLE = ("name", "sku", "hsn", "gst_rate_bp", "unit", "sell_price_paise", "buy_price_paise",
+              "reorder_milli", "warranty_months", "tracking")
+_INT_FIELDS = ("gst_rate_bp", "sell_price_paise", "buy_price_paise", "reorder_milli", "warranty_months")
+
+
+def get_item(conn, item_id):
+    return conn.execute("SELECT * FROM item WHERE id = ?", (item_id,)).fetchone()
+
+
+def item_barcodes(conn, item_id):
+    return [r["code"] for r in conn.execute(
+        "SELECT code FROM item_barcode WHERE item_id = ? ORDER BY code", (item_id,))]
+
+
+def list_items(conn, search="", *, include_inactive=False, limit=500):
+    search = (search or "").strip()
+    return conn.execute(
+        """SELECT i.*, COALESCE((SELECT SUM(qty_milli) FROM stock_movement WHERE item_id = i.id), 0)
+                  AS on_hand_milli
+           FROM item i
+           WHERE (? = 1 OR i.active = 1)
+             AND (? = '' OR instr(lower(i.name), lower(?)) > 0 OR i.sku = ?
+                  OR EXISTS (SELECT 1 FROM item_barcode b WHERE b.item_id = i.id AND b.code = ?))
+           ORDER BY i.name LIMIT ?""",
+        (int(include_inactive), search, search, search, search, limit),
+    ).fetchall()
+
+
+@writes
+def update_item(conn, item_id, **fields):
+    unknown = sorted(set(fields) - set(_UPDATABLE))
+    if unknown:
+        raise ItemError(f"Cannot change {unknown}")
+    if not fields:
+        raise ItemError("Nothing to change")
+    old = get_item(conn, item_id)
+    if old is None:
+        raise ItemError("No such item")
+    if "name" in fields:
+        fields["name"] = (fields["name"] or "").strip()
+        if not fields["name"]:
+            raise ItemError("Item name is required")
+    for field in _INT_FIELDS:
+        if field in fields and (type(fields[field]) is not int or fields[field] < 0):
+            raise ItemError(f"{field} must be a non-negative whole number")
+    if "sku" in fields:
+        fields["sku"] = (fields["sku"] or "").strip() or None
+    if "tracking" in fields:
+        if fields["tracking"] not in TRACKING:
+            raise ItemError(f"tracking must be one of {TRACKING}")
+        if fields["tracking"] != old["tracking"] and conn.execute(
+                "SELECT 1 FROM stock_movement WHERE item_id = ? LIMIT 1", (item_id,)).fetchone():
+            raise ItemError("Tracking cannot change once the item has stock history")
+    with transaction(conn):
+        try:
+            # column names come from the _UPDATABLE whitelist above, values are bound parameters
+            conn.execute(f"UPDATE item SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                         (*fields.values(), item_id))
+        except sqlite3.IntegrityError as exc:
+            if "item.sku" in str(exc):
+                raise ItemError(f"SKU {fields['sku']!r} is already used by another item") from exc
+            raise
+        audit.log(conn, "update", "item", item_id, ", ".join(sorted(fields)))
+
+
+@writes
+def set_item_active(conn, item_id, active):
+    if type(active) is not bool:
+        raise ItemError("active must be True or False")
+    with transaction(conn):
+        if conn.execute("UPDATE item SET active = ? WHERE id = ?", (int(active), item_id)).rowcount == 0:
+            raise ItemError("No such item")
+        audit.log(conn, "activate" if active else "deactivate", "item", item_id)
+
+
+@writes
+def set_barcodes(conn, item_id, codes):
+    if isinstance(codes, str) or not isinstance(codes, (list, tuple, set)):
+        raise ItemError("barcodes must be a list of codes")
+    cleaned = list(dict.fromkeys(c.strip() for c in codes if isinstance(c, str) and c.strip()))
+    with transaction(conn):
+        if get_item(conn, item_id) is None:
+            raise ItemError("No such item")
+        conn.execute("DELETE FROM item_barcode WHERE item_id = ?", (item_id,))
+        for code in cleaned:
+            _insert_barcode(conn, item_id, code)
+        audit.log(conn, "barcodes", "item", item_id, ",".join(cleaned))

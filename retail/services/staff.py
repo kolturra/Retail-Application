@@ -106,3 +106,19 @@ def expense_total(conn, start, end, category=None):
         sql += " AND category = ?"
         params.append(category)
     return conn.execute(sql, params).fetchone()[0]
+
+
+def list_expenses(conn, start, end, category=None):
+    _check_date(start)
+    _check_date(end)
+    if start > end:
+        raise StaffError("The start date must not be after the end date")
+    if category is not None and category not in CATEGORIES:
+        raise StaffError(f"category must be one of {CATEGORIES}")
+    sql = ("SELECT e.*, COALESCE(s.name, '') AS staff_name FROM expense e "
+           "LEFT JOIN staff s ON s.id = e.staff_id WHERE e.spent_on BETWEEN ? AND ?")
+    params = [start, end]
+    if category is not None:
+        sql += " AND e.category = ?"
+        params.append(category)
+    return conn.execute(sql + " ORDER BY e.spent_on DESC, e.id DESC", params).fetchall()

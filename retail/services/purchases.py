@@ -95,3 +95,12 @@ def create_purchase(conn, *, party_id, invoice_no, lines, date_iso=None):
         conn.execute("UPDATE purchase SET total_paise = ? WHERE id = ?", (total, purchase_id))
         audit.log(conn, "create", "purchase", purchase_id, invoice_no or "")
     return purchase_id
+
+
+def list_purchases(conn, limit=50):
+    return conn.execute(
+        """SELECT p.id, p.invoice_no, p.purchase_date, COALESCE(pt.name, '') AS supplier, p.total_paise
+           FROM purchase p LEFT JOIN party pt ON pt.id = p.party_id
+           ORDER BY p.purchase_date DESC, p.id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()

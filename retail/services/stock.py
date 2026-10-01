@@ -4,6 +4,7 @@ import sqlite3
 from retail import clock
 from retail.db import transaction
 from retail.guard import writes
+from retail.services import audit
 
 
 class InsufficientStock(ValueError):
@@ -121,3 +122,28 @@ def low_stock(conn):
              AND COALESCE((SELECT SUM(qty_milli) FROM stock_movement WHERE item_id = i.id), 0) <= i.reorder_milli
            ORDER BY i.name"""
     ).fetchall()
+
+
+class StockError(ValueError):
+    pass
+
+
+@writes
+def adjust_stock(conn, item_id, qty_milli, reason):
+    """Audited manual correction (damage, count difference) for counted/weighed items."""
+    if type(qty_milli) is not int or qty_milli == 0:
+        raise StockError("An adjustment must be a non-zero whole number of milli-units")
+    reason = (reason or "").strip() if isinstance(reason, str) or reason is None else ""
+    if not reason:
+        raise StockError("A reason is required")
+    with transaction(conn):
+        item = conn.execute("SELECT tracking FROM item WHERE id = ? AND active = 1", (item_id,)).fetchone()
+        if item is None:
+            raise StockError("No such item")
+        if item["tracking"] in ("serial", "batch"):
+            raise StockError("Serial and batch stock is changed through purchases and returns")
+        if on_hand(conn, item_id) + qty_milli < 0:
+            raise InsufficientStock("The adjustment would make stock negative")
+        movement_id = _record(conn, item_id, qty_milli, "adjustment", "adjustment", None)
+        audit.log(conn, "adjust", "item", item_id, f"{qty_milli}: {reason}")
+    return movement_id

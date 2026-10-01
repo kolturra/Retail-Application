@@ -5,7 +5,7 @@ from datetime import date, datetime
 from retail import clock, money
 from retail.db import transaction
 from retail.guard import writes
-from retail.services import audit, gst, shop, stock
+from retail.services import audit, gst, reports, shop, stock
 
 PAYMENT_MODES = ("cash", "upi", "card", "emi", "credit")
 REFUND_MODES = ("cash", "upi", "card", "credit")
@@ -464,3 +464,72 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
         )
         audit.log(conn, "return", "bill", return_id, f"{bill_no} against bill {original_bill_id}")
     return return_id
+
+
+def get_bill_detail(conn, bill_id):
+    bill = _bill(conn, bill_id)
+    party = None
+    if bill["party_id"] is not None:
+        party = conn.execute("SELECT * FROM party WHERE id = ?", (bill["party_id"],)).fetchone()
+    lines = conn.execute(
+        """SELECT l.*, i.name AS item_name, i.unit AS unit, i.tracking AS tracking,
+                  u.serial AS serial, u.batch_no AS batch_no
+           FROM bill_line l JOIN item i ON i.id = l.item_id
+           LEFT JOIN stock_unit u ON u.id = l.unit_id
+           WHERE l.bill_id = ? ORDER BY l.id""",
+        (bill_id,),
+    ).fetchall()
+    payments = conn.execute("SELECT * FROM payment WHERE bill_id = ? ORDER BY id", (bill_id,)).fetchall()
+    warranties = conn.execute(
+        """SELECT w.*, u.serial AS serial FROM warranty w JOIN stock_unit u ON u.id = w.unit_id
+           WHERE w.bill_id = ? ORDER BY w.id""",
+        (bill_id,),
+    ).fetchall()
+    return {"bill": bill, "party": party, "lines": lines, "payments": payments, "warranties": warranties}
+
+
+def list_bills(conn, start, end, *, search=""):
+    reports.check_range(start, end)
+    search = (search or "").strip()
+    return conn.execute(
+        """SELECT b.id, b.bill_no, b.kind, b.finalized_at, date(b.finalized_at) AS bill_date,
+                  COALESCE(p.name, '') AS party, b.total_paise
+           FROM bill b LEFT JOIN party p ON p.id = b.party_id
+           WHERE b.status = 'final' AND date(b.finalized_at) BETWEEN ? AND ?
+             AND (? = '' OR instr(lower(b.bill_no), lower(?)) > 0
+                  OR instr(lower(COALESCE(p.name, '')), lower(?)) > 0)
+           ORDER BY b.finalized_at DESC, b.id DESC""",
+        (start, end, search, search, search),
+    ).fetchall()
+
+
+@writes
+def set_line_discount(conn, bill_id, line_id, discount_paise):
+    if type(discount_paise) is not int or discount_paise < 0:
+        raise BillingError("Discount must be a non-negative whole number of paise")
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        line = conn.execute("SELECT * FROM bill_line WHERE id = ? AND bill_id = ?", (line_id, bill_id)).fetchone()
+        if line is None:
+            raise BillingError("No such line on this bill")
+        amount = money.line_amount(line["rate_paise"], line["qty_milli"]) - discount_paise
+        if amount < 0:
+            raise BillingError("Discount is larger than the line amount")
+        conn.execute("UPDATE bill_line SET discount_paise = ?, amount_paise = ? WHERE id = ?",
+                     (discount_paise, amount, line_id))
+        _retax(conn, bill_id)
+
+
+def returnable_lines(conn, bill_id):
+    bill = _bill(conn, bill_id, status="final")
+    if bill["kind"] != "sale":
+        raise BillingError("Only sale bills can be returned")
+    rows = conn.execute(
+        """SELECT l.id AS line_id, l.item_id, i.name AS item_name, i.tracking, l.qty_milli, l.total_paise,
+                  COALESCE((SELECT SUM(r.qty_milli) FROM bill_line r JOIN bill rb ON rb.id = r.bill_id
+                            WHERE r.ref_line_id = l.id AND rb.kind = 'sale_return' AND rb.status = 'final'), 0)
+                      AS returned_milli
+           FROM bill_line l JOIN item i ON i.id = l.item_id WHERE l.bill_id = ? ORDER BY l.id""",
+        (bill_id,),
+    ).fetchall()
+    return [{**dict(r), "remaining_milli": r["qty_milli"] - r["returned_milli"]} for r in rows]

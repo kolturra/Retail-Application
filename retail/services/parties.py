@@ -78,3 +78,31 @@ def list_dues(conn):
         if bal > 0:
             dues.append({"party_id": p["id"], "name": p["name"], "phone": p["phone"], "balance_paise": bal})
     return sorted(dues, key=lambda d: (-d["balance_paise"], d["name"]))
+
+
+def list_parties(conn, *, kind=None, search=""):
+    if kind not in (None, "customer", "supplier"):
+        raise PartyError("kind must be 'customer' or 'supplier'")
+    search = (search or "").strip()
+    rows = conn.execute(
+        """SELECT * FROM party
+           WHERE (? IS NULL OR type IN (?, 'both'))
+             AND (? = '' OR instr(lower(name), lower(?)) > 0 OR instr(COALESCE(phone, ''), ?) > 0)
+           ORDER BY name""",
+        (kind, kind, search, search, search),
+    ).fetchall()
+    return [{**dict(r), "balance_paise": balance(conn, r["id"])} for r in rows]
+
+
+@writes
+def update_party(conn, party_id, *, name, phone=None, gstin=None, state_code=None):
+    name = (name or "").strip()
+    if not name:
+        raise PartyError("Party name is required")
+    with transaction(conn):
+        cur = conn.execute(
+            "UPDATE party SET name = ?, phone = ?, gstin = ?, state_code = ? WHERE id = ?",
+            (name, phone, gstin, state_code, party_id))
+        if cur.rowcount == 0:
+            raise PartyError("No such party")
+        audit.log(conn, "update", "party", party_id, name)

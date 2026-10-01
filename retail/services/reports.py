@@ -27,6 +27,9 @@ def _check_range(start, end):
         raise ValueError(f"start {start} is after end {end}")
 
 
+check_range = _check_range
+
+
 def _safe_text(value):
     """Defuse CSV formula injection: text starting with = + - @ TAB or CR gets a leading single quote."""
     if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
