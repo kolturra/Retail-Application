@@ -9,7 +9,7 @@ SALES_COLUMNS = ["bill_no", "bill_date", "kind", "party", "gstin", "taxable_pais
                  "sgst_paise", "igst_paise", "round_off_paise", "total_paise"]
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")  # OWASP CSV-injection list
 
 
 def _check_day(value):
@@ -28,7 +28,7 @@ def _check_range(start, end):
 
 
 def _safe_text(value):
-    """Defuse CSV formula injection: text starting with = + - @ gets a leading single quote."""
+    """Defuse CSV formula injection: text starting with = + - @ TAB or CR gets a leading single quote."""
     if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
         return "'" + value
     return value

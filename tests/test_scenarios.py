@@ -1,4 +1,5 @@
 """Cross-module scenarios that mirror the spec's success criteria."""
+import csv
 from datetime import date
 
 import pytest
@@ -8,7 +9,8 @@ from retail.services import backup, billing, items, parties, purchases, reports,
 from retail.services.purchases import PurchaseLine
 from tools import license_issuer as issuer
 
-TODAY = clock.today().isoformat()
+def today():
+    return clock.today().isoformat()
 
 
 def test_grocery_day_weighed_sale_udhaar_and_gst_report(db_path, tmp_path):
@@ -40,7 +42,7 @@ def test_grocery_day_weighed_sale_udhaar_and_gst_report(db_path, tmp_path):
     assert stock.on_hand(conn, rice) == 49_250
     assert [r["name"] for r in stock.low_stock(conn)] == ["Biscuits"]  # 4 left, reorder at 5
 
-    summary = {r["gst_rate_bp"]: r for r in reports.gst_summary(conn, TODAY, TODAY)}
+    summary = {r["gst_rate_bp"]: r for r in reports.gst_summary(conn, today(), today())}
     assert summary[1800]["taxable_paise"] == 1780 and summary[1800]["cgst_paise"] == 160
     conn.close()
 
@@ -66,7 +68,7 @@ def test_electronics_serial_sale_warranty_and_return(db_path, tmp_path):
     billing.create_return(conn, bill, [(line, 1000)], refund_mode="card")
     assert stock.on_hand(conn, phone) == 2000
     assert conn.execute("SELECT COUNT(*) FROM warranty").fetchone()[0] == 0
-    register = reports.sales_register(conn, TODAY, TODAY)
+    register = reports.sales_register(conn, today(), today())
     assert [r["total_paise"] for r in register] == [total, -total]
     conn.close()
 
@@ -97,9 +99,12 @@ def test_expired_license_is_read_only_but_data_stays_visible_and_exportable(db_p
         stock.record(conn, it, 1000, "adjustment")
 
     assert stock.on_hand(conn, it) == 4_000                         # reads work
-    rows = reports.sales_register(conn, TODAY, TODAY)
+    rows = reports.sales_register(conn, today(), today())
     reports.write_csv(rows, tmp_path / "export.csv", reports.SALES_COLUMNS)   # exports work
-    assert (tmp_path / "export.csv").exists()
+    with open(tmp_path / "export.csv", newline="", encoding="utf-8-sig") as handle:
+        exported = list(csv.reader(handle))
+    assert exported[0] == [c[:-6] if c.endswith("_paise") else c for c in reports.SALES_COLUMNS]
+    assert len(exported) >= 2 and exported[1][0].startswith("S")
     assert backup.backup_now(conn, tmp_path / "bk").path.exists()   # backups still work
     conn.close()
 
@@ -119,7 +124,7 @@ def test_restore_undoes_a_bad_day(db_path, tmp_path):
     backup.restore(snapshot, db_path, bk, max_version=db.latest_version())
     conn = db.open_shop(db_path, bk)
     assert stock.on_hand(conn, it) == 5_000
-    assert reports.sales_register(conn, TODAY, TODAY) == []
+    assert reports.sales_register(conn, today(), today()) == []
     assert billing.finalize(conn, _held_tea_bill(conn, it), [("cash", 500)]) == "S000001"  # numbering restored too
     conn.close()
 

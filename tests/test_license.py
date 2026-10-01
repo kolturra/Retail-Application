@@ -137,3 +137,52 @@ def test_apply_license_survives_corrupt_key_file(keys, tmp_path):
     path.write_bytes(bytes([0xff, 0xfe, 0x00, 0x80]))
     assert lic.apply_license(path, pub, MACHINE, TODAY).status == "invalid"
     assert guard.is_read_only() is True
+
+
+def test_gen_keys_requires_retail_dir_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert issuer.main(["gen-keys", "--out", "keys"]) == 2
+    assert not (tmp_path / "keys" / "private.key").exists()
+    assert "retail" in capsys.readouterr().err
+
+
+def test_gen_keys_never_overwrites_existing_key(tmp_path, monkeypatch):
+    (tmp_path / "retail").mkdir()
+    (tmp_path / "keys").mkdir()
+    (tmp_path / "keys" / "private.key").write_text("original", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert issuer.main(["gen-keys", "--out", "keys"]) == 1
+    assert (tmp_path / "keys" / "private.key").read_text(encoding="utf-8") == "original"
+
+
+def test_issue_cli_missing_key_file_is_clean_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert issuer.main(["issue", "--machine", MACHINE, "--buyer", "T", "--expires", "2027-01-01"]) == 2
+    assert "private key" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize("content", ["not-hex-SECRETCONTENT", "abcd", "", "zz" * 32])
+def test_issue_cli_bad_key_content_is_clean_error_and_not_echoed(tmp_path, monkeypatch, capsys, content):
+    (tmp_path / "keys").mkdir()
+    (tmp_path / "keys" / "private.key").write_text(content, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert issuer.main(["issue", "--machine", MACHINE, "--buyer", "T", "--expires", "2027-01-01"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "SECRETCONTENT" not in captured.err and (not content or content not in captured.err)
+
+
+def test_issue_strips_machine_and_buyer_before_signing(keys):
+    import base64, json
+    priv, _ = keys
+    key = issuer.issue(priv, machine=f"  {MACHINE} ", buyer="  Sri Kirana\n", expires="2027-01-01")
+    payload = key.split(".")[0]
+    data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    assert data["machine"] == MACHINE and data["buyer"] == "Sri Kirana"
+
+
+@pytest.mark.parametrize("plan", ["", "  ", None, 5, b"standard"])
+def test_issue_requires_non_empty_string_plan(keys, plan):
+    priv, _ = keys
+    with pytest.raises(ValueError):
+        issuer.issue(priv, machine=MACHINE, buyer="T", expires="2027-01-01", plan=plan)

@@ -5,6 +5,21 @@ import pytest
 from retail import db
 
 
+@pytest.fixture
+def open_conn():
+    """Connections opened by a test are closed at teardown (no ResourceWarning)."""
+    opened = []
+
+    def _open(path):
+        conn = db.connect(path)
+        opened.append(conn)
+        return conn
+
+    yield _open
+    for conn in opened:
+        conn.close()
+
+
 def _dir(tmp_path, files):
     d = tmp_path / "m"
     d.mkdir()
@@ -13,20 +28,20 @@ def _dir(tmp_path, files):
     return d
 
 
-def test_migrate_applies_in_order_and_is_idempotent(tmp_path):
+def test_migrate_applies_in_order_and_is_idempotent(tmp_path, open_conn):
     d = _dir(tmp_path, {"0001_a.sql": "CREATE TABLE t(x INTEGER);", "0002_b.sql": "ALTER TABLE t ADD COLUMN y TEXT;"})
-    conn = db.connect(tmp_path / "a.db")
+    conn = open_conn(tmp_path / "a.db")
     assert db.migrate(conn, migrations_dir=d) == 2
     assert db.schema_version(conn) == 2
     assert db.migrate(conn, migrations_dir=d) == 2
 
 
-def test_failed_migration_rolls_back_and_keeps_version(tmp_path):
+def test_failed_migration_rolls_back_and_keeps_version(tmp_path, open_conn):
     d = _dir(tmp_path, {
         "0001_a.sql": "CREATE TABLE t(x INTEGER);",
         "0002_bad.sql": "CREATE TABLE u(x INTEGER); INSERT INTO nope VALUES (1);",
     })
-    conn = db.connect(tmp_path / "a.db")
+    conn = open_conn(tmp_path / "a.db")
     with pytest.raises(sqlite3.Error):
         db.migrate(conn, migrations_dir=d)
     assert db.schema_version(conn) == 1
@@ -34,17 +49,17 @@ def test_failed_migration_rolls_back_and_keeps_version(tmp_path):
     assert "t" in tables and "u" not in tables
 
 
-def test_before_callback_runs_only_when_pending(tmp_path):
+def test_before_callback_runs_only_when_pending(tmp_path, open_conn):
     d = _dir(tmp_path, {"0001_a.sql": "CREATE TABLE t(x INTEGER);"})
-    conn = db.connect(tmp_path / "a.db")
+    conn = open_conn(tmp_path / "a.db")
     calls = []
     db.migrate(conn, migrations_dir=d, before=lambda: calls.append(1))
     db.migrate(conn, migrations_dir=d, before=lambda: calls.append(1))
     assert calls == [1]
 
 
-def test_transaction_commits_and_rolls_back(tmp_path):
-    conn = db.connect(tmp_path / "a.db")
+def test_transaction_commits_and_rolls_back(tmp_path, open_conn):
+    conn = open_conn(tmp_path / "a.db")
     conn.execute("CREATE TABLE t(x INTEGER)")
     with db.transaction(conn):
         conn.execute("INSERT INTO t VALUES (1)")
@@ -55,8 +70,8 @@ def test_transaction_commits_and_rolls_back(tmp_path):
     assert [r[0] for r in conn.execute("SELECT x FROM t")] == [1]
 
 
-def test_nested_transaction_inner_failure_rolls_back_only_inner(tmp_path):
-    conn = db.connect(tmp_path / "a.db")
+def test_nested_transaction_inner_failure_rolls_back_only_inner(tmp_path, open_conn):
+    conn = open_conn(tmp_path / "a.db")
     conn.execute("CREATE TABLE t(x INTEGER)")
     with db.transaction(conn):
         conn.execute("INSERT INTO t VALUES (1)")
@@ -69,8 +84,8 @@ def test_nested_transaction_inner_failure_rolls_back_only_inner(tmp_path):
     assert [r[0] for r in conn.execute("SELECT x FROM t")] == [1]
 
 
-def test_outer_failure_rolls_back_inner_success(tmp_path):
-    conn = db.connect(tmp_path / "a.db")
+def test_outer_failure_rolls_back_inner_success(tmp_path, open_conn):
+    conn = open_conn(tmp_path / "a.db")
     conn.execute("CREATE TABLE t(x INTEGER)")
     with pytest.raises(RuntimeError):
         with db.transaction(conn):
@@ -80,8 +95,8 @@ def test_outer_failure_rolls_back_inner_success(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0
 
 
-def test_failed_commit_rolls_back_and_leaves_no_open_transaction(tmp_path):
-    conn = db.connect(tmp_path / "a.db")
+def test_failed_commit_rolls_back_and_leaves_no_open_transaction(tmp_path, open_conn):
+    conn = open_conn(tmp_path / "a.db")
     conn.execute("CREATE TABLE p(id INTEGER PRIMARY KEY)")
     conn.execute("CREATE TABLE c(pid INTEGER REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED)")
     with pytest.raises(sqlite3.IntegrityError):

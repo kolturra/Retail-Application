@@ -120,3 +120,26 @@ def test_serials_duplicating_after_normalisation_fail_atomically(shop_conn):
     assert stock.on_hand(shop_conn, phone) == 0
     assert shop_conn.execute("SELECT COUNT(*) FROM stock_unit").fetchone()[0] == 0
     assert shop_conn.execute("SELECT COUNT(*) FROM purchase").fetchone()[0] == 0
+
+
+def test_generator_lines_are_accepted(shop_conn):
+    tea = items.create_item(shop_conn, name="Tea", sell_price_paise=500)
+    pid = purchases.create_purchase(shop_conn, party_id=None, invoice_no="G1",
+                                    lines=(PurchaseLine(tea, 5_000, 100) for _ in range(1)))
+    assert stock.on_hand(shop_conn, tea) == 5_000 and pid
+
+
+@pytest.mark.parametrize("serials", ["AB", b"AB", ("A1", ""), ("A1", "  "), ("A1", 5), None, {"A1"}])
+def test_serials_must_be_a_sequence_of_non_empty_strings(shop_conn, serials):
+    phone = items.create_item(shop_conn, name="Phone", sell_price_paise=1, tracking="serial")
+    with pytest.raises(PurchaseError):
+        purchases.create_purchase(shop_conn, party_id=None, invoice_no="X",
+                                  lines=[PurchaseLine(phone, 2000, 1, serials=serials)])
+    assert stock.on_hand(shop_conn, phone) == 0
+
+
+def test_list_serials_are_accepted(shop_conn):
+    phone = items.create_item(shop_conn, name="Phone", sell_price_paise=1, tracking="serial")
+    purchases.create_purchase(shop_conn, party_id=None, invoice_no="X",
+                              lines=[PurchaseLine(phone, 2000, 1, serials=["A1", "B2"])])
+    assert stock.on_hand(shop_conn, phone) == 2000

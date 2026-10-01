@@ -56,6 +56,7 @@ def _receive(conn, purchase_id, line):
 
 @writes
 def create_purchase(conn, *, party_id, invoice_no, lines, date_iso=None):
+    lines = list(lines)  # a generator must not be silently exhausted by validation
     if not lines:
         raise PurchaseError("A purchase needs at least one line")
     for line in lines:
@@ -64,6 +65,9 @@ def create_purchase(conn, *, party_id, invoice_no, lines, date_iso=None):
         for value in (line.qty_milli, line.cost_paise):
             if type(value) is not int:
                 raise PurchaseError("Quantity and cost must be whole numbers")
+        if type(line.serials) not in (tuple, list) or not all(
+                type(s) is str and s.strip() for s in line.serials):
+            raise PurchaseError("Serials must be a list of non-empty text values")
     if party_id is not None and conn.execute(
             "SELECT 1 FROM party WHERE id = ?", (party_id,)).fetchone() is None:
         raise PurchaseError("No such party")

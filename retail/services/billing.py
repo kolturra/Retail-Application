@@ -230,6 +230,7 @@ def cancel_held(conn, bill_id):
 @writes
 def finalize(conn, bill_id, payments, *, today=None):
     """Finish a held sale bill. `payments` is [(mode, amount_paise), ...]."""
+    payments = list(payments)  # a generator must not be silently exhausted by validation
     if today is not None and not (isinstance(today, date) and not isinstance(today, datetime)):
         raise BillingError("today must be a date")
     for entry in payments:

@@ -181,3 +181,28 @@ def test_start_bill_blocked_when_read_only(shop_conn):
     guard.set_read_only(True)
     with pytest.raises(guard.ReadOnlyError):
         billing.start_bill(shop_conn)
+
+
+def test_generator_payments_are_not_silently_exhausted(shop_conn, soap):
+    bill = held_soap_bill(shop_conn, soap)
+    with pytest.raises(BillingError):
+        billing.finalize(shop_conn, bill, (p for p in []))          # empty generator on a non-zero bill
+    assert billing.get_bill(shop_conn, bill)["bill"]["status"] == "held"
+    assert billing.finalize(shop_conn, bill, (p for p in [("upi", 5000), ("cash", 6800)])) == "S000001"
+    assert billing.get_bill(shop_conn, bill)["bill"]["total_paise"] == 11800
+
+
+def test_bill_number_not_burned_by_failure_after_numbering(shop_conn, soap, monkeypatch):
+    bill = held_soap_bill(shop_conn, soap)
+    real = stock._record
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk exploded")
+
+    monkeypatch.setattr(stock, "_record", boom)
+    with pytest.raises(RuntimeError):
+        billing.finalize(shop_conn, bill, [("cash", 11800)])
+    monkeypatch.setattr(stock, "_record", real)
+    held = billing.get_bill(shop_conn, bill)["bill"]
+    assert held["status"] == "held" and held["bill_no"] is None
+    assert billing.finalize(shop_conn, bill, [("cash", 11800)]) == "S000001"
