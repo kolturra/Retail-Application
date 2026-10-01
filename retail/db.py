@@ -4,6 +4,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+from retail.services import backup
+
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_FILE = re.compile(r"^(\d{4})_.+\.sql$")
 _savepoint_ids = itertools.count(1)
@@ -79,3 +81,18 @@ def transaction(conn):
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
+
+
+def latest_version(migrations_dir=MIGRATIONS_DIR) -> int:
+    versions = [int(m.group(1)) for p in Path(migrations_dir).iterdir() if (m := _MIGRATION_FILE.match(p.name))]
+    return max(versions, default=0)
+
+
+def open_shop(db_path, backup_dir, *, migrations_dir=MIGRATIONS_DIR):
+    """Open the shop database, upgrading it safely: an existing database is backed up first."""
+    conn = connect(db_path)
+    before = None
+    if schema_version(conn) > 0:
+        before = lambda: backup.backup_now(conn, backup_dir, prefix="pre-migrate")
+    migrate(conn, migrations_dir=migrations_dir, before=before)
+    return conn
