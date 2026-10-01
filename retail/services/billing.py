@@ -1,5 +1,7 @@
 """Sale bills. A bill is built as 'held', finalized once, and never edited afterwards.
 Money is integer paise; quantity is integer milli-units."""
+from datetime import date, datetime
+
 from retail import clock, money
 from retail.db import transaction
 from retail.guard import writes
@@ -223,3 +225,81 @@ def cancel_held(conn, bill_id):
         _bill(conn, bill_id, status="held")
         conn.execute("UPDATE bill SET status = 'cancelled' WHERE id = ?", (bill_id,))
         audit.log(conn, "cancel_held", "bill", bill_id)
+
+
+@writes
+def finalize(conn, bill_id, payments, *, today=None):
+    """Finish a held sale bill. `payments` is [(mode, amount_paise), ...]."""
+    if today is not None and not (isinstance(today, date) and not isinstance(today, datetime)):
+        raise BillingError("today must be a date")
+    for entry in payments:
+        if type(entry) not in (tuple, list) or len(entry) != 2:
+            raise BillingError("Each payment must be a (mode, amount) pair")
+        if type(entry[1]) is not int:
+            raise BillingError("Payment amount must be a whole number of paise")
+    today = today or clock.today()
+    with transaction(conn):
+        bill = _bill(conn, bill_id, status="held")
+        if bill["kind"] != "sale":
+            raise BillingError("Only sale bills are finalized here")
+        lines = conn.execute(
+            """SELECT l.*, i.tracking, i.warranty_months FROM bill_line l
+               JOIN item i ON i.id = l.item_id WHERE l.bill_id = ? ORDER BY l.id""",
+            (bill_id,),
+        ).fetchall()
+        if not lines:
+            raise BillingError("Cannot finalize an empty bill")
+        for mode, amount in payments:
+            if mode not in PAYMENT_MODES:
+                raise BillingError(f"Unknown payment mode {mode!r}")
+            if amount <= 0:
+                raise BillingError("Each payment must be greater than zero")
+        if sum(amount for _, amount in payments) != bill["total_paise"]:
+            raise BillingError("Payments must add up exactly to the bill total")
+        if any(mode == "credit" for mode, _ in payments) and bill["party_id"] is None:
+            raise BillingError("Credit sales need a customer")
+
+        policy = shop.get_shop(conn)["oversell_policy"]
+        needed = {}
+        per_unit = {}
+        for line in lines:
+            if line["tracking"] == "serial":
+                unit = conn.execute(
+                    "SELECT status FROM stock_unit WHERE id = ?", (line["unit_id"],)
+                ).fetchone()
+                if unit is None or unit["status"] != "in_stock":
+                    raise SerialUnavailable("A serial on this bill is no longer in stock")
+            else:
+                needed[line["item_id"]] = needed.get(line["item_id"], 0) + line["qty_milli"]
+                if line["unit_id"] is not None:
+                    per_unit[line["unit_id"]] = per_unit.get(line["unit_id"], 0) + line["qty_milli"]
+        for item_id, qty in needed.items():
+            stock.check_available(conn, item_id, qty, policy)
+        if policy == "block":
+            for unit_id, qty in per_unit.items():
+                if stock.unit_on_hand(conn, unit_id) < qty:
+                    raise stock.InsufficientStock("Not enough stock in a batch on this bill")
+
+        bill_no = _next_number(conn, "sale", "S")
+        now = clock.now_iso()
+        conn.execute(
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
+            (bill_no, now, bill_id),
+        )
+        for line in lines:
+            stock._record(conn, line["item_id"], -line["qty_milli"], "sale", "bill", bill_id, line["unit_id"])
+            if line["tracking"] == "serial":
+                conn.execute("UPDATE stock_unit SET status = 'sold' WHERE id = ?", (line["unit_id"],))
+                if line["warranty_months"]:
+                    end = clock.add_months(today, line["warranty_months"])
+                    conn.execute(
+                        "INSERT INTO warranty(unit_id, bill_id, start_date, end_date) VALUES (?,?,?,?)",
+                        (line["unit_id"], bill_id, today.isoformat(), end.isoformat()),
+                    )
+        for mode, amount in payments:
+            conn.execute(
+                "INSERT INTO payment(bill_id, mode, amount_paise, created_at) VALUES (?,?,?,?)",
+                (bill_id, mode, amount, now),
+            )
+        audit.log(conn, "finalize", "bill", bill_id, bill_no)
+    return bill_no
