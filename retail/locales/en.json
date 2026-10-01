@@ -125,5 +125,18 @@
   "dlg.paid": "Paid",
   "dlg.balance": "Balance",
   "dlg.cash_given": "Cash given",
-  "dlg.change": "Change to return"
+  "dlg.change": "Change to return",
+  "counter.entry_hint": "Scan a barcode or type an item name (use 3* before it for quantity)",
+  "counter.customer": "Customer",
+  "counter.customer_set": "Customer: {name}",
+  "counter.walk_in_label": "Walk-in customer",
+  "counter.discount": "Discount",
+  "counter.hold": "Hold",
+  "counter.held": "Held bills",
+  "counter.discard": "Discard bill",
+  "counter.delete_line": "Delete line",
+  "counter.pay": "Pay",
+  "counter.gst": "GST",
+  "counter.saved": "Bill {bill_no} saved",
+  "counter.discard_confirm": "Discard this bill?"
 }

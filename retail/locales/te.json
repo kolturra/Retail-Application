@@ -125,5 +125,18 @@
   "dlg.paid": "చెల్లించినది",
   "dlg.balance": "మిగిలినది",
   "dlg.cash_given": "తీసుకున్న నగదు",
-  "dlg.change": "తిరిగి ఇవ్వాల్సినది"
+  "dlg.change": "తిరిగి ఇవ్వాల్సినది",
+  "counter.entry_hint": "బార్‌కోడ్ స్కాన్ చేయండి లేదా వస్తువు పేరు టైప్ చేయండి (పరిమాణానికి ముందు 3* రాయండి)",
+  "counter.customer": "కస్టమర్",
+  "counter.customer_set": "కస్టమర్: {name}",
+  "counter.walk_in_label": "కస్టమర్ లేకుండా (నగదు)",
+  "counter.discount": "తగ్గింపు",
+  "counter.hold": "ఆపు",
+  "counter.held": "ఆపిన బిల్లులు",
+  "counter.discard": "బిల్లును తొలగించు",
+  "counter.delete_line": "లైన్ తొలగించు",
+  "counter.pay": "చెల్లింపు",
+  "counter.gst": "GST",
+  "counter.saved": "బిల్లు {bill_no} సేవ్ అయింది",
+  "counter.discard_confirm": "ఈ బిల్లును తొలగించాలా?"
 }

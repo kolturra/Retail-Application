@@ -125,5 +125,18 @@
   "dlg.paid": "चुकाया",
   "dlg.balance": "बाकी",
   "dlg.cash_given": "नकद मिला",
-  "dlg.change": "लौटाने की रकम"
+  "dlg.change": "लौटाने की रकम",
+  "counter.entry_hint": "बारकोड स्कैन करें या वस्तु का नाम लिखें (मात्रा के लिए पहले 3* लिखें)",
+  "counter.customer": "ग्राहक",
+  "counter.customer_set": "ग्राहक: {name}",
+  "counter.walk_in_label": "बिना ग्राहक (नकद)",
+  "counter.discount": "छूट",
+  "counter.hold": "रोकें",
+  "counter.held": "रोके गए बिल",
+  "counter.discard": "बिल हटाएँ",
+  "counter.delete_line": "लाइन हटाएँ",
+  "counter.pay": "भुगतान",
+  "counter.gst": "GST",
+  "counter.saved": "बिल {bill_no} सहेजा गया",
+  "counter.discard_confirm": "यह बिल हटाएँ?"
 }
