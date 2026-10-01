@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import date
 
 import pytest
@@ -69,7 +70,11 @@ def test_restore_round_trip(db_path, bk):
     conn = db.open_shop(db_path, bk)
     assert shop.get_shop(conn)["name"] == "Before"
     conn.close()
-    assert backup.validate_backup(safety)  # the pre-restore copy holds the "After" state
+    probe = sqlite3.connect(safety.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        assert probe.execute("SELECT name FROM shop").fetchone()[0] == "After"
+    finally:
+        probe.close()
 
 
 @pytest.mark.parametrize("content", [b"this is not a database at all", b"", b"SQLite format 3\x00" + b"\x00" * 200])
@@ -88,8 +93,11 @@ def test_restore_of_corrupt_file_fails_and_leaves_data_untouched(db_path, bk, tm
 
 def test_restore_of_missing_file_fails(db_path, bk, tmp_path):
     db.open_shop(db_path, bk).close()
+    before = db_path.read_bytes()
     with pytest.raises(backup.BackupError):
         backup.restore(tmp_path / "nope.db", db_path, bk)
+    assert db_path.read_bytes() == before
+    assert not list(bk.glob("pre-restore-*"))
 
 
 def test_restore_of_a_non_shop_database_fails(db_path, bk, tmp_path):
@@ -165,3 +173,99 @@ def test_garbage_file_named_like_a_backup_does_not_break_listing(shop_conn, bk):
     backup.backup_now(shop_conn, bk, keep=1)  # pruning also tolerates it
     with pytest.raises(backup.BackupError):
         backup.validate_backup(junk)
+
+
+# --- fix round 1 ---
+
+def test_open_shop_closes_the_connection_when_migration_fails(tmp_path, db_path, bk):
+    d = tmp_path / "badmig"
+    d.mkdir()
+    (d / "0001_bad.sql").write_text("THIS IS NOT SQL;")
+    with pytest.raises(sqlite3.Error):
+        db.open_shop(db_path, bk, migrations_dir=d)
+    db_path.unlink()  # on Windows this fails if a handle leaked
+    assert not db_path.exists()
+
+
+class _FailingConn:
+    def backup(self, target):
+        raise sqlite3.OperationalError("disk I/O error")
+
+
+def test_failed_backup_leaves_no_partial_file(bk):
+    with pytest.raises(sqlite3.OperationalError):
+        backup.backup_now(_FailingConn(), bk)
+    assert not list(bk.glob("*"))
+    assert backup.daily_backup_due(bk, date.today()) is True
+
+
+def test_prune_is_anchored_to_the_prefix(shop_conn, bk):
+    backup.backup_now(shop_conn, bk, prefix="pre-migrate", keep=5)
+    backup.backup_now(shop_conn, bk, prefix="pre", keep=1)
+    backup.backup_now(shop_conn, bk, prefix="pre", keep=1)
+    names = [p.name for p in backup.list_backups(bk)]
+    assert sum(n.startswith("pre-migrate-") for n in names) == 1
+    assert sum(n.startswith("pre-2") for n in names) == 1
+
+
+@pytest.mark.parametrize("prefix", ["a*", "a?", "a[b", "a]"])
+def test_backup_now_rejects_wildcard_prefix(shop_conn, bk, prefix):
+    with pytest.raises(backup.BackupError):
+        backup.backup_now(shop_conn, bk, prefix=prefix)
+
+
+def test_prune_tolerates_unremovable_files_and_keeps_new_backup(shop_conn, bk, monkeypatch):
+    old = backup.backup_now(shop_conn, bk, keep=99).path
+    os.utime(old, ns=(1_000_000_000,) * 2)
+    real_unlink = type(old).unlink
+
+    def locked(self, *a, **k):
+        if self == old:
+            raise PermissionError("locked")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(type(old), "unlink", locked)
+    result = backup.backup_now(shop_conn, bk, keep=1)
+    assert result.path.exists() and old.exists()
+
+
+def test_prune_never_deletes_the_new_backup(shop_conn, bk):
+    first = backup.backup_now(shop_conn, bk, keep=99).path
+    os.utime(first, ns=(4_000_000_000_000_000_000,) * 2)  # looks newer than anything made now
+    result = backup.backup_now(shop_conn, bk, keep=1)
+    assert result.path.exists()
+
+
+def test_restore_failure_cleans_staging_and_leaves_live_db(db_path, bk, monkeypatch):
+    conn = db.open_shop(db_path, bk)
+    snapshot = backup.backup_now(conn, bk).path
+    conn.close()
+    before = db_path.read_bytes()
+
+    def boom(src, dst):
+        raise OSError("in use")
+
+    monkeypatch.setattr(backup.os, "replace", boom)
+    with pytest.raises(backup.BackupError):
+        backup.restore(snapshot, db_path, bk)
+    assert not list(db_path.parent.glob("*.restoring"))
+    assert db_path.read_bytes() == before
+
+
+def test_restore_with_no_existing_db_returns_none(db_path, bk):
+    conn = db.open_shop(db_path, bk)
+    snapshot = backup.backup_now(conn, bk).path
+    conn.close()
+    db_path.unlink()
+    assert backup.restore(snapshot, db_path, bk) is None
+    assert db_path.exists()
+
+
+def test_validate_rejects_unmigrated_database(tmp_path):
+    p = tmp_path / "v0.db"
+    c = sqlite3.connect(str(p))
+    c.execute("CREATE TABLE shop(x)")
+    c.commit()
+    c.close()
+    with pytest.raises(backup.BackupError):
+        backup.validate_backup(p)

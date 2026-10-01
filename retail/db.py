@@ -91,8 +91,12 @@ def latest_version(migrations_dir=MIGRATIONS_DIR) -> int:
 def open_shop(db_path, backup_dir, *, migrations_dir=MIGRATIONS_DIR):
     """Open the shop database, upgrading it safely: an existing database is backed up first."""
     conn = connect(db_path)
-    before = None
-    if schema_version(conn) > 0:
-        before = lambda: backup.backup_now(conn, backup_dir, prefix="pre-migrate")
-    migrate(conn, migrations_dir=migrations_dir, before=before)
+    try:
+        before = None
+        if schema_version(conn) > 0:
+            before = lambda: backup.backup_now(conn, backup_dir, prefix="pre-migrate")
+        migrate(conn, migrations_dir=migrations_dir, before=before)
+    except BaseException:
+        conn.close()
+        raise
     return conn
