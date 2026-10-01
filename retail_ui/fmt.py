@@ -59,6 +59,17 @@ def parse_qty(text: str) -> int:
     return milli
 
 
+def parse_signed_qty(text: str) -> int:
+    """A non-zero quantity with an optional sign, in whole milli-units (at most 3 decimals)."""
+    cleaned = _strict(text, "a quantity")
+    if "." in cleaned and len(cleaned.split(".")[1]) > 3:
+        raise ValueError(f"Too many decimals: {text!r}")
+    milli = money.qty_to_milli(cleaned)
+    if milli == 0:
+        raise ValueError("Quantity must not be zero")
+    return milli
+
+
 def date_text(iso: str) -> str:
     if not iso:
         return ""

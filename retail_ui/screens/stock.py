@@ -1,5 +1,4 @@
 from datetime import date
-from decimal import InvalidOperation
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout,
@@ -37,19 +36,13 @@ class AdjustDialog(QDialog):
         self._check()
 
     def _qty(self):
-        try:
-            milli = money.qty_to_milli(self.qty_edit.text().strip())
-        except InvalidOperation as exc:
-            raise ValueError("not a quantity") from exc
-        if milli == 0:
-            raise ValueError("zero")
-        return milli
+        return fmt.parse_signed_qty(self.qty_edit.text())
 
     def _check(self):
         try:
             self._qty()
             self.ok_button.setEnabled(bool(self.reason()))
-        except ValueError:
+        except (ValueError, ArithmeticError):
             self.ok_button.setEnabled(False)
 
     def qty_milli(self):
@@ -123,6 +116,9 @@ class PurchaseDialog(QDialog):
         self.picker.selection_changed.connect(self._update_fields)
         self._update_fields()
 
+    def _show_error(self, exc):
+        show_error(self, exc)
+
     def _reload_suppliers(self, select=None):
         self.supplier_box.clear()
         self.supplier_box.addItem(tr("pur.no_supplier"), None)
@@ -135,7 +131,7 @@ class PurchaseDialog(QDialog):
         try:
             new_id = parties.create_party(self.session.conn, name=self.new_supplier_edit.text(), type="supplier")
         except Exception as exc:
-            show_error(self, exc)
+            self._show_error(exc)
             return
         self.new_supplier_edit.clear()
         self._reload_suppliers(select=new_id)

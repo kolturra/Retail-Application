@@ -38,7 +38,8 @@ def test_item_picker_searches_and_selects(shop_conn, qtbot):
 
 
 @pytest.mark.parametrize("text,ok,milli", [("5", True, 5000), ("-2.5", True, -2500), ("0", False, None),
-                                           ("", False, None), ("abc", False, None)])
+                                           ("", False, None), ("abc", False, None), ("1e3", False, None),
+                                           ("1_0", False, None), ("1.0004", False, None), ("+3", True, 3000)])
 def test_adjust_dialog_quantity(qtbot, text, ok, milli):
     d = AdjustDialog("Rice")
     qtbot.addWidget(d)
@@ -69,6 +70,8 @@ def test_stock_tab_lists_on_hand_and_flags_low_stock(screen):
     assert screen.stock_model.data(screen.stock_model.index(0, 1)) == "2 kg"
     assert screen.stock_model.data(screen.stock_model.index(0, 3)) == i18n.tr("stock.status_low")
     assert screen.stock_model.data(screen.stock_model.index(1, 3)) == i18n.tr("stock.status_ok")
+    assert screen.stock_model.data(screen.stock_model.index(0, 0), Qt.ItemDataRole.BackgroundRole) is not None
+    assert screen.stock_model.data(screen.stock_model.index(1, 0), Qt.ItemDataRole.BackgroundRole) is None
     assert screen.low_label.text() == i18n.tr("stock.low", count=1)
 
 
@@ -191,3 +194,14 @@ def test_read_only_and_language(screen):
     screen.retranslate()
     assert screen.stock_model.headerData(0, Qt.Orientation.Horizontal) == i18n.tr("common.name")
     assert screen.tabs.tabText(0) == i18n.tr("stock.tab_stock")
+
+
+@pytest.mark.parametrize("name", ["", "  "])
+def test_add_supplier_errors_go_through_show_error(make_session, qtbot, name):
+    d = PurchaseDialog(make_session())
+    qtbot.addWidget(d)
+    d.errors = []
+    d._show_error = lambda exc: d.errors.append(exc)
+    d.new_supplier_edit.setText(name)
+    d.add_supplier_button.click()
+    assert len(d.errors) == 1
