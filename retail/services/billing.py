@@ -345,6 +345,11 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
                    WHERE l.ref_line_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
                 (line_id,),
             ).fetchone()
+            item_tracking = conn.execute(
+                "SELECT tracking FROM item WHERE id = ?", (ol["item_id"],)
+            ).fetchone()["tracking"]
+            if item_tracking == "serial" and qty != ol["qty_milli"]:
+                raise BillingError("Serial items must be returned whole")
             remaining = ol["qty_milli"] - done["q"]
             if qty > remaining:
                 raise BillingError("Cannot return more than was sold")
@@ -359,6 +364,33 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
                  ol["gst_rate_bp"]),
             )
         _retax(conn, return_id)  # while still held: lines are frozen once the bill is final
+        # Rounding policy: every return bill is rounded to the rupee like any bill, so a partial
+        # return may differ from a pro-rata share of the original by up to 50 paise. The return
+        # that COMPLETES the original (every original line fully returned cumulatively) instead
+        # settles to original total - earlier final return totals, so cumulative refunds equal
+        # exactly what the customer paid. Done while still held so the immutability triggers allow it.
+        outstanding = conn.execute(
+            """SELECT COUNT(*) FROM bill_line ol
+               WHERE ol.bill_id = ? AND ol.qty_milli != (
+                   SELECT COALESCE(SUM(l.qty_milli), 0) FROM bill_line l JOIN bill b ON b.id = l.bill_id
+                   WHERE l.ref_line_id = ol.id AND b.kind = 'sale_return'
+                     AND (b.status = 'final' OR b.id = ?))""",
+            (original_bill_id, return_id),
+        ).fetchone()[0]
+        if outstanding == 0:
+            prior = conn.execute(
+                """SELECT COALESCE(SUM(total_paise), 0) FROM bill
+                   WHERE ref_bill_id = ? AND kind = 'sale_return' AND status = 'final'""",
+                (original_bill_id,),
+            ).fetchone()[0]
+            line_sum = conn.execute(
+                "SELECT COALESCE(SUM(total_paise), 0) FROM bill_line WHERE bill_id = ?", (return_id,)
+            ).fetchone()[0]
+            settle = orig["total_paise"] - prior
+            conn.execute(
+                "UPDATE bill SET total_paise = ?, round_off_paise = ? WHERE id = ?",
+                (settle, settle - line_sum, return_id),
+            )
         total = conn.execute("SELECT total_paise FROM bill WHERE id = ?", (return_id,)).fetchone()[0]
         bill_no = _next_number(conn, "sale_return", "R")
         lines = conn.execute(

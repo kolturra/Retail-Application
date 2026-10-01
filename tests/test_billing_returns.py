@@ -120,12 +120,133 @@ def test_serial_return_restocks_unit_clears_warranty_and_allows_resale(shop_conn
     assert billing.add_line(shop_conn, again, phone, 1000, serial="IMEI123")
 
 
-@pytest.mark.parametrize("bad", [True, 1000.0, "1000", None, (1, 2, 3), 5])
-def test_return_entries_must_be_pairs_of_plain_ints(shop_conn, bad):
+
+
+
+@pytest.mark.parametrize("make", [
+    pytest.param(lambda lid: [(lid, True)], id="bool-qty"),
+    pytest.param(lambda lid: [(lid, 1000.0)], id="float-qty"),
+    pytest.param(lambda lid: [(lid, "1000")], id="str-qty"),
+    pytest.param(lambda lid: [(lid, None)], id="none-qty"),
+    pytest.param(lambda lid: [(True, 1000)], id="bool-line-id"),
+    pytest.param(lambda lid: [(float(lid), 1000)], id="float-line-id"),
+    pytest.param(lambda lid: [(lid, 1000, 1)], id="triple"),
+    pytest.param(lambda lid: [lid], id="bare-int"),
+    pytest.param(lambda lid: [[lid, 1000]], id="list-pair"),
+])
+def test_return_entries_must_be_pairs_of_plain_ints(shop_conn, make):
     soap, bill_id, line_id = sold_soaps(shop_conn)
-    entries = [bad] if (isinstance(bad, tuple) or bad == 5) else [(line_id, bad)]
     with pytest.raises(BillingError):
-        billing.create_return(shop_conn, bill_id, entries)
-    with pytest.raises(BillingError):
-        billing.create_return(shop_conn, bill_id, [(True, 1000)])
+        billing.create_return(shop_conn, bill_id, make(line_id))
     assert shop_conn.execute("SELECT COUNT(*) FROM bill WHERE kind='sale_return'").fetchone()[0] == 0
+
+
+def _odd_bill(conn, qty, price, gst_bp=0):
+    item = items.create_item(conn, name="Odd", sell_price_paise=price, gst_rate_bp=gst_bp)
+    stock.record(conn, item, 10_000, "opening")
+    bill_id = billing.start_bill(conn)
+    line_id = billing.add_line(conn, bill_id, item, qty)
+    total = billing.get_bill(conn, bill_id)["bill"]["total_paise"]
+    billing.finalize(conn, bill_id, [("cash", total)])
+    return item, bill_id, line_id, total
+
+
+def _refunds(conn, bill_id):
+    return conn.execute(
+        """SELECT COALESCE(SUM(p.amount_paise), 0) FROM payment p JOIN bill b ON b.id = p.bill_id
+           WHERE b.ref_bill_id = ? AND b.kind = 'sale_return'""", (bill_id,)).fetchone()[0]
+
+
+@pytest.mark.parametrize("gst_bp", [0, 500])
+def test_three_unit_returns_refund_exactly_the_original_total(shop_conn, gst_bp):
+    item, bill_id, line_id, total = _odd_bill(shop_conn, 3000, 10033, gst_bp)
+    for _ in range(3):
+        billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    assert _refunds(shop_conn, bill_id) == total
+
+
+def test_single_full_return_refunds_original_total(shop_conn):
+    item, bill_id, line_id, total = _odd_bill(shop_conn, 3000, 10033, 500)
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, 3000)])
+    assert billing.get_bill(shop_conn, ret)["bill"]["total_paise"] == total
+    assert _refunds(shop_conn, bill_id) == total
+
+
+def test_full_return_in_two_when_original_has_round_off(shop_conn):
+    item, bill_id, line_id, total = _odd_bill(shop_conn, 3000, 10033)
+    assert billing.get_bill(shop_conn, bill_id)["bill"]["round_off_paise"] != 0
+    assert total == 30100
+    billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    last = billing.create_return(shop_conn, bill_id, [(line_id, 2000)])
+    got = billing.get_bill(shop_conn, last)
+    lines_total = sum(l["total_paise"] for l in got["lines"])
+    assert got["bill"]["round_off_paise"] == got["bill"]["total_paise"] - lines_total
+    assert _refunds(shop_conn, bill_id) == total
+
+
+def test_serial_items_must_be_returned_whole(shop_conn):
+    phone = items.create_item(shop_conn, name="Phone", sell_price_paise=1000000, tracking="serial")
+    unit = stock.add_unit(shop_conn, phone, serial="IMEI9")
+    stock.record(shop_conn, phone, 1000, "opening", unit_id=unit)
+    bill_id = billing.start_bill(shop_conn)
+    line_id = billing.add_line(shop_conn, bill_id, phone, 1000, serial="IMEI9")
+    billing.finalize(shop_conn, bill_id, [("cash", 1000000)])
+    with pytest.raises(BillingError):
+        billing.create_return(shop_conn, bill_id, [(line_id, 500)])
+    assert shop_conn.execute("SELECT COUNT(*) FROM bill WHERE kind='sale_return'").fetchone()[0] == 0
+    assert stock.on_hand(shop_conn, phone) == 0
+    assert shop_conn.execute("SELECT status FROM stock_unit WHERE id=?", (unit,)).fetchone()[0] == "sold"
+
+
+def test_failed_return_does_not_burn_the_r_number(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=1000)
+    with pytest.raises(BillingError):
+        billing.create_return(shop_conn, bill_id, [(line_id, 5000)])
+    ret = billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    assert billing.get_bill(shop_conn, ret)["bill"]["bill_no"] == "R000001"
+
+
+def test_second_invalid_line_rolls_back_everything(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=3000)
+    pen = items.create_item(shop_conn, name="Pen", sell_price_paise=1000)
+    stock.record(shop_conn, pen, 5000, "opening")
+    b2 = billing.start_bill(shop_conn)
+    l2 = billing.add_line(shop_conn, b2, pen, 1000)
+    billing.finalize(shop_conn, b2, [("cash", 1000)])
+    movements = shop_conn.execute("SELECT COUNT(*) FROM stock_movement").fetchone()[0]
+    payments = shop_conn.execute("SELECT COUNT(*) FROM payment").fetchone()[0]
+    with pytest.raises(BillingError):
+        billing.create_return(shop_conn, bill_id, [(line_id, 1000), (l2, 1000)])
+    assert shop_conn.execute("SELECT COUNT(*) FROM bill WHERE kind='sale_return'").fetchone()[0] == 0
+    assert shop_conn.execute("SELECT COUNT(*) FROM stock_movement").fetchone()[0] == movements
+    assert shop_conn.execute("SELECT COUNT(*) FROM payment").fetchone()[0] == payments
+    assert stock.on_hand(shop_conn, soap) == 7_000
+
+
+def test_batch_line_returns_to_the_same_batch(shop_conn):
+    milk = items.create_item(shop_conn, name="Milk", sell_price_paise=10000, tracking="batch")
+    batch = stock.add_unit(shop_conn, milk, batch_no="B1", expiry="2026-12-01")
+    stock.record(shop_conn, milk, 5000, "opening", unit_id=batch)
+    bill_id = billing.start_bill(shop_conn)
+    line_id = billing.add_line(shop_conn, bill_id, milk, 2000)
+    billing.finalize(shop_conn, bill_id, [("cash", 20000)])
+    assert stock.unit_on_hand(shop_conn, batch) == 3000
+    billing.create_return(shop_conn, bill_id, [(line_id, 2000)])
+    assert stock.unit_on_hand(shop_conn, batch) == 5000
+
+
+def test_original_bill_lines_and_payments_are_unchanged_by_a_return(shop_conn):
+    soap, bill_id, line_id = sold_soaps(shop_conn, qty=3000)
+
+    def snap():
+        lines = [tuple(r) for r in shop_conn.execute(
+            "SELECT * FROM bill_line WHERE bill_id=? ORDER BY id", (bill_id,))]
+        pays = [tuple(r) for r in shop_conn.execute(
+            "SELECT * FROM payment WHERE bill_id=? ORDER BY id", (bill_id,))]
+        bill = tuple(shop_conn.execute("SELECT * FROM bill WHERE id=?", (bill_id,)).fetchone())
+        return lines, pays, bill
+
+    before = snap()
+    billing.create_return(shop_conn, bill_id, [(line_id, 1000)])
+    billing.create_return(shop_conn, bill_id, [(line_id, 2000)])
+    assert snap() == before
