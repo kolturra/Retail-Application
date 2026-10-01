@@ -303,3 +303,83 @@ def finalize(conn, bill_id, payments, *, today=None):
             )
         audit.log(conn, "finalize", "bill", bill_id, bill_no)
     return bill_no
+
+
+@writes
+def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
+    """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill."""
+    if refund_mode not in REFUND_MODES:
+        raise BillingError(f"refund_mode must be one of {REFUND_MODES}")
+    if not returns:
+        raise BillingError("Nothing to return")
+    for entry in returns:
+        if (not isinstance(entry, tuple) or len(entry) != 2
+                or type(entry[0]) is not int or type(entry[1]) is not int):
+            raise BillingError("Each return must be a (line_id, qty_milli) pair of whole numbers")
+    line_ids = [line_id for line_id, _ in returns]
+    if len(set(line_ids)) != len(line_ids):
+        raise BillingError("The same line was listed twice")
+    with transaction(conn):
+        orig = _bill(conn, original_bill_id, status="final")
+        if orig["kind"] != "sale":
+            raise BillingError("Only sale bills can be returned")
+        if refund_mode == "credit" and orig["party_id"] is None:
+            raise BillingError("Credit refunds need a customer")
+        now = clock.now_iso()
+        return_id = conn.execute(
+            """INSERT INTO bill(kind, status, party_id, ref_bill_id, gst_mode, created_at)
+               VALUES ('sale_return','held',?,?,?,?)""",
+            (orig["party_id"], original_bill_id, orig["gst_mode"], now),
+        ).lastrowid
+        for line_id, qty in returns:
+            if qty <= 0:
+                raise BillingError("Return quantity must be greater than zero")
+            ol = conn.execute(
+                "SELECT * FROM bill_line WHERE id = ? AND bill_id = ?", (line_id, original_bill_id)
+            ).fetchone()
+            if ol is None:
+                raise BillingError("That line is not on the original bill")
+            done = conn.execute(
+                """SELECT COALESCE(SUM(l.qty_milli), 0) AS q, COALESCE(SUM(l.amount_paise), 0) AS a
+                   FROM bill_line l JOIN bill b ON b.id = l.bill_id
+                   WHERE l.ref_line_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
+                (line_id,),
+            ).fetchone()
+            remaining = ol["qty_milli"] - done["q"]
+            if qty > remaining:
+                raise BillingError("Cannot return more than was sold")
+            if qty == remaining:
+                amount = ol["amount_paise"] - done["a"]  # settle exactly, no rounding drift
+            else:
+                amount = (2 * ol["amount_paise"] * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
+            conn.execute(
+                """INSERT INTO bill_line(bill_id, item_id, unit_id, ref_line_id, qty_milli, rate_paise,
+                       discount_paise, amount_paise, gst_rate_bp) VALUES (?,?,?,?,?,?,0,?,?)""",
+                (return_id, ol["item_id"], ol["unit_id"], line_id, qty, ol["rate_paise"], amount,
+                 ol["gst_rate_bp"]),
+            )
+        _retax(conn, return_id)  # while still held: lines are frozen once the bill is final
+        total = conn.execute("SELECT total_paise FROM bill WHERE id = ?", (return_id,)).fetchone()[0]
+        bill_no = _next_number(conn, "sale_return", "R")
+        lines = conn.execute(
+            """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
+               WHERE l.bill_id = ?""",
+            (return_id,),
+        ).fetchall()
+        for line in lines:
+            stock._record(conn, line["item_id"], line["qty_milli"], "sale_return", "bill", return_id,
+                          line["unit_id"])
+            if line["tracking"] == "serial":
+                conn.execute("UPDATE stock_unit SET status = 'in_stock' WHERE id = ?", (line["unit_id"],))
+                conn.execute("DELETE FROM warranty WHERE unit_id = ?", (line["unit_id"],))
+        if total > 0:
+            conn.execute(
+                "INSERT INTO payment(bill_id, mode, amount_paise, created_at) VALUES (?,?,?,?)",
+                (return_id, refund_mode, total, now),
+            )
+        conn.execute(
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
+            (bill_no, now, return_id),
+        )
+        audit.log(conn, "return", "bill", return_id, f"{bill_no} against bill {original_bill_id}")
+    return return_id
