@@ -160,5 +160,16 @@
   "bills.remaining": "వాపసు మిగిలినది",
   "wa.phone_prompt": "కస్టమర్ WhatsApp నంబర్",
   "wa.no_phone": "ఇది సరైన ఫోన్ నంబర్ కాదు.",
-  "counter.print_last": "చివరి బిల్లు ప్రింట్ చేయండి"
+  "counter.print_last": "చివరి బిల్లు ప్రింట్ చేయండి",
+  "items.on_hand": "స్టాక్‌లో",
+  "items.reorder": "మళ్లీ ఆర్డర్ చేయాల్సినది",
+  "items.inactive": "నిష్క్రియం",
+  "items.show_inactive": "నిష్క్రియ వస్తువులను చూపండి",
+  "items.deactivate": "నిష్క్రియం / సక్రియం చేయండి",
+  "items.unit": "యూనిట్",
+  "items.buy_price": "కొనుగోలు ధర",
+  "items.warranty": "వారంటీ (నెలలు)",
+  "items.barcodes": "బార్‌కోడ్‌లు (కామాతో వేరు చేయండి)",
+  "items.dialog_title": "వస్తువు",
+  "items.limit_note": "మొదటి 500 వస్తువులు చూపుతున్నాం — ఇతరాలను కనుగొనడానికి సెర్చ్ బాక్స్‌లో టైప్ చేయండి."
 }

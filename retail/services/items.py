@@ -188,3 +188,7 @@ def set_barcodes(conn, item_id, codes):
         for code in cleaned:
             _insert_barcode(conn, item_id, code)
         audit.log(conn, "barcodes", "item", item_id, ",".join(cleaned))
+
+
+def has_stock_history(conn, item_id):
+    return conn.execute("SELECT 1 FROM stock_movement WHERE item_id = ? LIMIT 1", (item_id,)).fetchone() is not None

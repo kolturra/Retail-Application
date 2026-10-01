@@ -160,5 +160,16 @@
   "bills.remaining": "वापसी बाकी",
   "wa.phone_prompt": "ग्राहक का WhatsApp नंबर",
   "wa.no_phone": "यह उपयोगी फ़ोन नंबर नहीं है।",
-  "counter.print_last": "पिछला बिल प्रिंट करें"
+  "counter.print_last": "पिछला बिल प्रिंट करें",
+  "items.on_hand": "स्टॉक में",
+  "items.reorder": "दोबारा मँगाएँ",
+  "items.inactive": "निष्क्रिय",
+  "items.show_inactive": "निष्क्रिय वस्तुएँ दिखाएँ",
+  "items.deactivate": "निष्क्रिय / सक्रिय करें",
+  "items.unit": "इकाई",
+  "items.buy_price": "खरीद मूल्य",
+  "items.warranty": "वारंटी (महीने)",
+  "items.barcodes": "बारकोड (कॉमा से अलग)",
+  "items.dialog_title": "वस्तु",
+  "items.limit_note": "पहली 500 वस्तुएँ दिख रही हैं — दूसरी खोजने के लिए सर्च बॉक्स में लिखें।"
 }

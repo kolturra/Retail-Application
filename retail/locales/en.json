@@ -160,5 +160,16 @@
   "bills.remaining": "Left to return",
   "wa.phone_prompt": "Customer's WhatsApp number",
   "wa.no_phone": "That is not a usable phone number.",
-  "counter.print_last": "Print last bill"
+  "counter.print_last": "Print last bill",
+  "items.on_hand": "On hand",
+  "items.reorder": "Reorder at",
+  "items.inactive": "inactive",
+  "items.show_inactive": "Show inactive items",
+  "items.deactivate": "Deactivate / Activate",
+  "items.unit": "Unit",
+  "items.buy_price": "Purchase price",
+  "items.warranty": "Warranty (months)",
+  "items.barcodes": "Barcodes (comma separated)",
+  "items.dialog_title": "Item",
+  "items.limit_note": "Showing the first 500 items — type in the search box to find others."
 }

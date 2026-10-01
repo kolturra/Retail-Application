@@ -269,3 +269,10 @@ def test_check_range_is_public():
     reports.check_range("2026-09-01", "2026-09-30")
     with pytest.raises(ValueError):
         reports.check_range("2026-09-30", "2026-09-01")
+
+
+def test_has_stock_history(shop_conn):
+    a = items.create_item(shop_conn, name="A", sell_price_paise=1)
+    assert items.has_stock_history(shop_conn, a) is False
+    stock.record(shop_conn, a, 1000, "opening")
+    assert items.has_stock_history(shop_conn, a) is True
