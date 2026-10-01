@@ -30,6 +30,11 @@ def load(path) -> UiSettings:
 
 def save(path, settings: UiSettings) -> None:
     path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

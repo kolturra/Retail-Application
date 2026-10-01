@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 
 import pytest
 
@@ -46,7 +47,7 @@ def test_parse_rupees(text, paise):
     assert fmt.parse_rupees(text) == paise
 
 
-@pytest.mark.parametrize("text", ["", "abc", "1.2.3", "₹", "--5"])
+@pytest.mark.parametrize("text", ["", "abc", "1.2.3", "₹", "--5", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5"])
 def test_parse_rupees_rejects_garbage(text):
     with pytest.raises(ValueError):
         fmt.parse_rupees(text)
@@ -55,7 +56,7 @@ def test_parse_rupees_rejects_garbage(text):
 def test_qty_helpers():
     assert fmt.qty(750) == "0.75" and fmt.qty(2000) == "2"
     assert fmt.parse_qty("0.75") == 750 and fmt.parse_qty(" 3 ") == 3000
-    for bad in ("", "0", "-1", "abc", "0.0001"):
+    for bad in ("", "0", "-1", "abc", "0.0001", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5"):
         with pytest.raises(ValueError):
             fmt.parse_qty(bad)
 
@@ -74,9 +75,32 @@ def test_states_and_gstin_validation():
     assert validators.gstin_error("36ABCDE1234F1Z5", "27") is not None  # state prefix mismatch
     assert validators.gstin_error("123", "36") is not None
     assert validators.phone_digits("+91 98765-43210") == "919876543210"
+    assert validators.gstin_error("३६ABCDE१२३४F१Z५", "36") is not None   # Devanagari digits rejected
+    assert validators.phone_digits("९८६६") == ""
 
 
 def test_vendor_urls():
-    assert vendor.whatsapp_request_url("RTL-AAAA-BBBB-CCCC-DDDD").startswith("https://wa.me/919866079246?text=")
-    assert "RTL-AAAA-BBBB-CCCC-DDDD" in __import__("urllib.parse").parse.unquote(vendor.whatsapp_request_url("RTL-AAAA-BBBB-CCCC-DDDD"))
-    assert (vendor.email_request_url("X") is None) == (vendor.VENDOR_EMAIL == "")
+    url = vendor.whatsapp_request_url("RTL-AAAA-BBBB-CCCC-DDDD")
+    assert url.startswith("https://wa.me/919866079246?text=")
+    assert "RTL-AAAA-BBBB-CCCC-DDDD" in urllib.parse.unquote(url)
+
+
+def test_email_request_url(monkeypatch):
+    monkeypatch.setattr(vendor, "VENDOR_EMAIL", "a@b.co")
+    url = vendor.email_request_url("RTL-X-1")
+    assert url.startswith("mailto:a@b.co?") and "RTL-X-1" in urllib.parse.unquote(url)
+    monkeypatch.setattr(vendor, "VENDOR_EMAIL", "")
+    assert vendor.email_request_url("RTL-X-1") is None
+
+
+def test_settings_save_creates_parent_and_cleans_tmp(tmp_path, monkeypatch):
+    path = tmp_path / "new" / "dir" / "settings.json"
+    settings.save(path, settings.UiSettings(auto_print=True))
+    assert settings.load(path).auto_print is True
+
+    def boom(*a, **k):
+        raise OSError("nope")
+    monkeypatch.setattr(settings.os, "replace", boom)
+    with pytest.raises(OSError):
+        settings.save(path, settings.UiSettings())
+    assert not list(path.parent.glob("*.tmp"))

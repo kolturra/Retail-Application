@@ -1,8 +1,19 @@
 """Display formatting and parsing. Money stays integer paise and quantity integer milli-units
 everywhere else; only this module turns them into text."""
-from decimal import Decimal, InvalidOperation
+import re
+from decimal import Decimal
 
 from retail import money
+
+
+_NUMBER = re.compile(r"^[+-]?[0-9]+(\.[0-9]+)?$")
+
+
+def _strict(text: str, what: str) -> str:
+    cleaned = (text or "").replace("₹", "").replace(",", "").strip()
+    if not _NUMBER.match(cleaned):
+        raise ValueError(f"Not {what}: {text!r}")
+    return cleaned
 
 
 def _group(whole: int) -> str:
@@ -26,14 +37,11 @@ def rupees(paise: int, symbol: str = "₹") -> str:
 
 
 def parse_rupees(text: str) -> int:
-    cleaned = (text or "").replace("₹", "").replace(",", "").strip()
+    cleaned = _strict(text, "an amount")
     try:
-        value = Decimal(cleaned)
-    except InvalidOperation as exc:
+        return money.rupees_to_paise(Decimal(cleaned))
+    except ArithmeticError as exc:
         raise ValueError(f"Not an amount: {text!r}") from exc
-    if not value.is_finite():
-        raise ValueError(f"Not an amount: {text!r}")
-    return money.rupees_to_paise(value)
 
 
 def qty(milli: int) -> str:
@@ -41,9 +49,10 @@ def qty(milli: int) -> str:
 
 
 def parse_qty(text: str) -> int:
+    cleaned = _strict(text, "a quantity")
     try:
-        milli = money.qty_to_milli((text or "").strip())
-    except InvalidOperation as exc:
+        milli = money.qty_to_milli(cleaned)
+    except ArithmeticError as exc:
         raise ValueError(f"Not a quantity: {text!r}") from exc
     if milli <= 0:
         raise ValueError("Quantity must be greater than zero")

@@ -1,6 +1,6 @@
 import re
 
-_GSTIN = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+_GSTIN = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$", re.ASCII)
 
 
 def gstin_error(text, state_code):
@@ -16,4 +16,4 @@ def gstin_error(text, state_code):
 
 
 def phone_digits(text):
-    return re.sub(r"\D", "", text or "")
+    return re.sub(r"[^0-9]", "", text or "")
