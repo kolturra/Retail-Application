@@ -94,11 +94,32 @@ def test_cancelled_onboarding_returns_none(paths, keypair, machine_id):
                 run_onboarding=lambda s: False) is None
 
 
-def test_expired_licence_with_no_shop_cannot_be_used(paths, keypair, machine_id):
+def test_expired_licence_with_no_shop_returns_a_read_only_session_without_a_shop(paths, keypair, machine_id):
     from datetime import date
     lic.save_key(paths.license_path, valid_key(keypair, machine_id, expires="2099-12-31"))
-    assert boot(paths, keypair, machine_id, request_activation=lambda m, i: None,
-                today=date(2100, 1, 1)) is None
+    session = boot(paths, keypair, machine_id, request_activation=lambda m, i: pytest.fail("no prompt"),
+                   run_onboarding=lambda s: pytest.fail("writes are blocked"), today=date(2100, 1, 1))
+    try:
+        assert session.has_shop() is False and session.read_only is True
+        assert session.conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        session.close()
+
+
+def test_quitting_at_activation_closes_the_connection(paths, keypair, machine_id):
+    assert boot(paths, keypair, machine_id, request_activation=lambda m, i: None) is None
+    paths.db_path.unlink()  # fails on Windows if the connection were left open
+
+
+def test_onboarding_error_propagates_and_closes_the_connection(paths, keypair, machine_id):
+    lic.save_key(paths.license_path, valid_key(keypair, machine_id))
+
+    def boom(session):
+        raise RuntimeError("onboarding failed")
+
+    with pytest.raises(RuntimeError, match="onboarding failed"):
+        boot(paths, keypair, machine_id, request_activation=lambda m, i: None, run_onboarding=boom)
+    paths.db_path.unlink()
 
 
 def test_language_from_the_shop_is_applied(paths, keypair, machine_id):

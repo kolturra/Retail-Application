@@ -33,11 +33,13 @@ def bootstrap(paths, *, public_key, machine_id, request_activation, run_onboardi
             lic.save_key(paths.license_path, key)
             state = lic.apply_license(paths.license_path, public_key, machine_id, today)
         session = AppSession(paths, settings, conn, state, public_key=public_key, machine_id=machine_id)
-        if not session.has_shop():
-            if state.read_only or not run_onboarding(session):
+        if not session.has_shop() and not state.read_only:
+            # an expired licence blocks writes, so onboarding is impossible; the owner may still restore a backup
+            if not run_onboarding(session):
                 session.close()
                 return None
-        i18n.set_language(session.shop()["language"])
+        if session.has_shop():
+            i18n.set_language(session.shop()["language"])
         return session
     except BaseException:
         try:

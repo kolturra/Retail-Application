@@ -114,3 +114,31 @@ def test_close_closes_the_connection(make_session):
     s.close()
     with pytest.raises(Exception):
         s.conn.execute("SELECT 1")
+
+
+def test_restore_reapplies_the_restored_language(make_session, qtbot):
+    s = make_session()
+    snapshot = s.backup_now().path          # taken while the shop language is "en"
+    s.set_language("hi")
+    with qtbot.waitSignal(s.language_changed) as blocker:
+        s.restore_from(snapshot)
+    assert blocker.args == ["en"] and i18n.get_language() == "en"
+
+
+def test_restore_reapplies_the_read_only_guard(make_session):
+    from retail import license as lic
+    s = make_session()
+    snapshot = s.backup_now().path
+    s.license = lic.apply_license(s.paths.license_path, s.public_key, s.machine_id, date(2100, 1, 1))
+    assert guard.is_read_only()
+    s.restore_from(snapshot)
+    assert guard.is_read_only()
+
+
+def test_refresh_license_applies_the_guard_when_expired(make_session, monkeypatch):
+    from retail import clock
+    s = make_session()
+    assert not guard.is_read_only()
+    monkeypatch.setattr(clock, "today", lambda: date(2100, 1, 1))
+    s.refresh_license()
+    assert s.read_only and guard.is_read_only()

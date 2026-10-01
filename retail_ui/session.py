@@ -87,12 +87,27 @@ class AppSession(QObject):
         """Replace the live database with a backup. The connection is closed for the swap and always
         reopened, so after a failed restore the app keeps running on the old data."""
         self.conn.close()
+        original = None
+        result = None
         try:
-            return backup.restore(path, self.paths.db_path, self.backup_dir, max_version=db.latest_version())
-        finally:
+            result = backup.restore(path, self.paths.db_path, self.backup_dir, max_version=db.latest_version())
+        except Exception as exc:
+            original = exc
+        try:
             self.conn = db.open_shop(self.paths.db_path, self.backup_dir)
-            guard.set_read_only(self.license.read_only)
-            self.data_changed.emit()
+        except Exception as reopen_error:
+            log.exception("could not reopen the database after restore")
+            raise (original if original is not None else reopen_error)
+        guard.set_read_only(self.license.read_only)
+        if self.has_shop():
+            code = self.shop()["language"]
+            if code != i18n.get_language():
+                i18n.set_language(code)
+                self.language_changed.emit(code)
+        self.data_changed.emit()
+        if original is not None:
+            raise original
+        return result
 
     def close(self) -> None:
         self.conn.close()

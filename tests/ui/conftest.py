@@ -40,10 +40,10 @@ def make_session(paths, keypair, machine_id):
         conn = db.open_shop(paths.db_path, paths.backup_dir)
         state = lic.apply_license(paths.license_path, public, machine_id)
         session = AppSession(paths, UiSettings(), conn, state, public_key=public, machine_id=machine_id)
+        made.append(session)  # registered before any setup so teardown always closes the connection
         if with_shop:
             shop.setup_shop(conn, name="Test Shop", state_code="36")
             segments.apply_template(conn, template)
-        made.append(session)
         return session
 
     yield make
