@@ -138,5 +138,13 @@
   "counter.pay": "చెల్లింపు",
   "counter.gst": "GST",
   "counter.saved": "బిల్లు {bill_no} సేవ్ అయింది",
-  "counter.discard_confirm": "ఈ బిల్లును తొలగించాలా?"
+  "counter.discard_confirm": "ఈ బిల్లును తొలగించాలా?",
+  "print.invoice": "పన్ను ఇన్వాయిస్",
+  "print.estimate": "అంచనా బిల్లు",
+  "print.return": "అమ్మకం వాపసు",
+  "print.bill_no": "బిల్లు నం.",
+  "print.paid_by": "చెల్లింపు విధానం",
+  "print.warranty": "వారంటీ వరకు",
+  "print.thanks": "ధన్యవాదాలు! మళ్లీ రండి.",
+  "tax.taxable": "పన్ను విధించదగిన విలువ"
 }

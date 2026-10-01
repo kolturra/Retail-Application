@@ -138,5 +138,13 @@
   "counter.pay": "भुगतान",
   "counter.gst": "GST",
   "counter.saved": "बिल {bill_no} सहेजा गया",
-  "counter.discard_confirm": "यह बिल हटाएँ?"
+  "counter.discard_confirm": "यह बिल हटाएँ?",
+  "print.invoice": "कर चालान (टैक्स इनवॉइस)",
+  "print.estimate": "अनुमान बिल",
+  "print.return": "बिक्री वापसी",
+  "print.bill_no": "बिल नं.",
+  "print.paid_by": "भुगतान का तरीका",
+  "print.warranty": "वारंटी तक",
+  "print.thanks": "धन्यवाद! फिर पधारें।",
+  "tax.taxable": "करयोग्य मूल्य"
 }

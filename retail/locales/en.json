@@ -138,5 +138,13 @@
   "counter.pay": "Pay",
   "counter.gst": "GST",
   "counter.saved": "Bill {bill_no} saved",
-  "counter.discard_confirm": "Discard this bill?"
+  "counter.discard_confirm": "Discard this bill?",
+  "print.invoice": "Tax Invoice",
+  "print.estimate": "Estimate",
+  "print.return": "Sale Return",
+  "print.bill_no": "Bill no.",
+  "print.paid_by": "Paid by",
+  "print.warranty": "Warranty till",
+  "print.thanks": "Thank you! Visit again.",
+  "tax.taxable": "Taxable value"
 }
