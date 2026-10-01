@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "retail-app"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["cryptography>=42"]
+dependencies = ["cryptography>=42", "PySide6>=6.10,<7"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-qt>=4.5", "pyinstaller>=6.20"]
 
 [tool.setuptools.packages.find]
-include = ["retail*"]
+include = ["retail*", "retail_ui*"]
 
 [tool.setuptools.package-data]
 retail = ["migrations/*.sql", "locales/*.json", "segments/*.json"]
@@ -20,3 +20,4 @@ retail = ["migrations/*.sql", "locales/*.json", "segments/*.json"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+qt_api = "pyside6"
