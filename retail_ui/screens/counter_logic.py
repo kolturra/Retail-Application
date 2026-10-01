@@ -1,0 +1,118 @@
+"""What a counter entry means. No Qt here: the screen asks, shows prompts, and calls back in."""
+from dataclasses import dataclass
+
+from retail.services import billing, items
+
+
+@dataclass(frozen=True)
+class Entry:
+    kind: str                 # ignored | added | pick | serial | weight | new_item
+    line_id: int | None = None
+    items: tuple = ()
+    item: object = None
+    qty_milli: int = 1000
+    text: str = ""
+    explicit_qty: bool = True
+
+
+class CounterController:
+    def __init__(self, holder):
+        self.holder = holder  # anything with a .conn (the AppSession): picks up a restored database
+        self.bill_id = None
+
+    @property
+    def conn(self):
+        return self.holder.conn
+
+    # --- entries -----------------------------------------------------------------
+    def submit(self, text):
+        text = (text or "").strip()
+        if not text:
+            return Entry("ignored")
+        qty, key = items.parse_entry(text)
+        if qty <= 0 or not key:
+            return Entry("ignored", text=text)
+        explicit = key != text            # the user typed a "3*" prefix
+        matches = items.resolve(self.conn, key)
+        if not matches:
+            return Entry("new_item", text=key, qty_milli=qty, explicit_qty=explicit)
+        if len(matches) > 1:
+            return Entry("pick", items=tuple(matches), text=key, qty_milli=qty, explicit_qty=explicit)
+        return self.add(matches[0], qty, explicit_qty=explicit)
+
+    def add(self, item, qty_milli, *, serial=None, explicit_qty=True):
+        tracking = item["tracking"]
+        if tracking == "serial":
+            if not serial:
+                return Entry("serial", item=item)
+            qty_milli = 1000
+        elif tracking == "weighed" and not explicit_qty:
+            return Entry("weight", item=item)
+        bill_id = self._ensure_bill()
+        line_id = billing.add_line(self.conn, bill_id, item["id"], qty_milli, serial=serial)
+        return Entry("added", line_id=line_id, item=item, qty_milli=qty_milli)
+
+    def _ensure_bill(self):
+        if self.bill_id is None:
+            self.bill_id = billing.start_bill(self.conn)
+        return self.bill_id
+
+    # --- the current bill -----------------------------------------------------------
+    def detail(self):
+        return None if self.bill_id is None else billing.get_bill_detail(self.conn, self.bill_id)
+
+    def has_lines(self):
+        detail = self.detail()
+        return bool(detail and detail["lines"])
+
+    def remove_line(self, line_id):
+        billing.remove_line(self.conn, self.bill_id, line_id)
+
+    def set_customer(self, party_id):
+        billing.set_party(self.conn, self._ensure_bill(), party_id)
+
+    def set_discount(self, line_id, discount_paise):
+        billing.set_line_discount(self.conn, self.bill_id, line_id, discount_paise)
+
+    # --- hold / resume / pay ----------------------------------------------------------
+    def held_bills(self):
+        rows = []
+        for bill in billing.list_held(self.conn):
+            if bill["id"] == self.bill_id:
+                continue
+            detail = billing.get_bill_detail(self.conn, bill["id"])
+            if detail["lines"]:
+                rows.append({"id": bill["id"], "party": detail["party"]["name"] if detail["party"] else "",
+                             "total_paise": bill["total_paise"], "lines": len(detail["lines"])})
+        return rows
+
+    def hold(self):
+        """Park the current bill; an empty one is cancelled instead. Returns the held bill id."""
+        if self.bill_id is None:
+            return None
+        if not self.has_lines():
+            billing.cancel_held(self.conn, self.bill_id)
+            self.bill_id = None
+            return None
+        held, self.bill_id = self.bill_id, None
+        return held
+
+    def resume(self, bill_id):
+        detail = billing.get_bill_detail(self.conn, bill_id)  # raises BillingError for an unknown bill
+        if detail["bill"]["status"] != "held" or detail["bill"]["kind"] != "sale":
+            raise billing.BillingError("Only a held sale bill can be resumed")
+        if bill_id != self.bill_id:
+            self.hold()
+            self.bill_id = bill_id
+
+    def discard(self):
+        if self.bill_id is not None:
+            billing.cancel_held(self.conn, self.bill_id)
+            self.bill_id = None
+
+    def pay(self, payments):
+        if self.bill_id is None:
+            raise billing.BillingError("There is no bill to pay")
+        bill_no = billing.finalize(self.conn, self.bill_id, payments)
+        bill_id, self.bill_id = self.bill_id, None
+        return bill_id, bill_no
