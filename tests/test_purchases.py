@@ -143,3 +143,32 @@ def test_list_serials_are_accepted(shop_conn):
     purchases.create_purchase(shop_conn, party_id=None, invoice_no="X",
                               lines=[PurchaseLine(phone, 2000, 1, serials=["A1", "B2"])])
     assert stock.on_hand(shop_conn, phone) == 2000
+
+
+@pytest.mark.parametrize("expiry", ["2026-2-1", "01/12/2026", "2026-13-01", "20261201", "", 20261201,
+                                    "2026-12-01T00:00"])
+def test_batch_expiry_must_be_a_canonical_iso_date(shop_conn, expiry):
+    milk = items.create_item(shop_conn, name="Milk", sell_price_paise=100, tracking="batch")
+    with pytest.raises(PurchaseError):
+        purchases.create_purchase(shop_conn, party_id=None, invoice_no="X",
+                                  lines=[PurchaseLine(milk, 1000, 50, batch_no="B1", expiry=expiry)])
+    assert shop_conn.execute("SELECT COUNT(*) FROM purchase").fetchone()[0] == 0
+    assert shop_conn.execute("SELECT COUNT(*) FROM stock_unit").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("date_iso", ["2026-9-30", "30/09/2026", "2026-02-30", "", 20260930, "2026-09-30 "])
+def test_purchase_date_must_be_a_canonical_iso_date(shop_conn, date_iso):
+    tea = items.create_item(shop_conn, name="Tea", sell_price_paise=500)
+    with pytest.raises(PurchaseError):
+        purchases.create_purchase(shop_conn, party_id=None, invoice_no="X",
+                                  lines=[PurchaseLine(tea, 1000, 50)], date_iso=date_iso)
+    assert shop_conn.execute("SELECT COUNT(*) FROM purchase").fetchone()[0] == 0
+    assert stock.on_hand(shop_conn, tea) == 0
+
+
+def test_canonical_dates_are_accepted(shop_conn):
+    milk = items.create_item(shop_conn, name="Milk", sell_price_paise=100, tracking="batch")
+    pid = purchases.create_purchase(shop_conn, party_id=None, invoice_no="X", date_iso="2026-09-30",
+                                    lines=[PurchaseLine(milk, 1000, 50, batch_no="B1", expiry="2026-12-01")])
+    assert shop_conn.execute("SELECT purchase_date FROM purchase WHERE id=?", (pid,)).fetchone()[0] == "2026-09-30"
+    assert shop_conn.execute("SELECT expiry FROM stock_unit").fetchone()[0] == "2026-12-01"

@@ -121,3 +121,18 @@ def test_non_unique_integrity_error_not_reported_as_duplicate(shop_conn):
     import sqlite3
     with pytest.raises(sqlite3.IntegrityError):
         items._insert_barcode(shop_conn, 999, "555")
+
+
+@pytest.mark.parametrize("barcodes", ["8901719101015", b"8901", None, [5], ["1", None], ["1", "  "],
+                                      {"1": 1}])
+def test_create_item_rejects_malformed_barcodes_and_writes_nothing(shop_conn, barcodes):
+    with pytest.raises(items.ItemError):
+        items.create_item(shop_conn, name="A", sell_price_paise=100, barcodes=barcodes)
+    assert shop_conn.execute("SELECT COUNT(*) FROM item").fetchone()[0] == 0
+    assert shop_conn.execute("SELECT COUNT(*) FROM item_barcode").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("barcodes", [("11", "22"), {"11", "22"}, ["11", "22"]])
+def test_create_item_accepts_barcode_sequences(shop_conn, barcodes):
+    iid = items.create_item(shop_conn, name="A", sell_price_paise=100, barcodes=barcodes)
+    assert shop_conn.execute("SELECT COUNT(*) FROM item_barcode WHERE item_id=?", (iid,)).fetchone()[0] == 2

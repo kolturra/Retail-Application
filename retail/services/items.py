@@ -40,6 +40,10 @@ def create_item(conn, *, name, sell_price_paise, gst_rate_bp=0, unit="pcs", trac
                          ("warranty_months", warranty_months)):
         if type(value) is not int or value < 0:
             raise ItemError(f"{label} must be a non-negative whole number")
+    # A bare string would otherwise be iterated character by character into one-digit barcodes.
+    if type(barcodes) not in (list, tuple, set) or not all(
+            type(code) is str and code.strip() for code in barcodes):
+        raise ItemError("barcodes must be a list of non-empty text values")
     sku = (sku or "").strip() or None
     with transaction(conn):
         try:

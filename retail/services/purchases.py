@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date
 
 from retail import clock, money
 from retail.db import transaction
@@ -18,6 +19,16 @@ class PurchaseLine:
     serials: tuple = ()
     batch_no: str | None = None
     expiry: str | None = None
+
+
+def _is_iso_date(value):
+    """True only for a canonical YYYY-MM-DD calendar date string."""
+    if type(value) is not str:
+        return False
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
 
 
 def _receive(conn, purchase_id, line):
@@ -68,6 +79,10 @@ def create_purchase(conn, *, party_id, invoice_no, lines, date_iso=None):
         if type(line.serials) not in (tuple, list) or not all(
                 type(s) is str and s.strip() for s in line.serials):
             raise PurchaseError("Serials must be a list of non-empty text values")
+        if line.expiry is not None and not _is_iso_date(line.expiry):
+            raise PurchaseError("Expiry must be a date like 2026-12-01")
+    if date_iso is not None and not _is_iso_date(date_iso):
+        raise PurchaseError("Purchase date must be a date like 2026-09-30")
     if party_id is not None and conn.execute(
             "SELECT 1 FROM party WHERE id = ?", (party_id,)).fetchone() is None:
         raise PurchaseError("No such party")

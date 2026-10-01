@@ -1,6 +1,6 @@
 """VENDOR-ONLY tool. Never ship this or the private key with the installer.
 
-  python -m tools.license_issuer gen-keys [--out keys]
+  python -m tools.license_issuer gen-keys [--out keys] [--force]
   python -m tools.license_issuer issue --machine RTL-... --buyer "Name" --expires 2027-09-30 [--plan standard]
 """
 import argparse
@@ -13,6 +13,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
+from retail import clock
 from retail.license import b64e
 
 
@@ -34,9 +35,13 @@ def issue(private_key, *, machine, buyer, expires, plan="standard"):
     if not isinstance(expires, str):
         raise ValueError("expires must be an ISO date string like 2027-09-30")
     try:
-        date.fromisoformat(expires)
+        expiry_date = date.fromisoformat(expires)
     except ValueError:
         raise ValueError("expires must be an ISO date string like 2027-09-30") from None
+    if expiry_date.isoformat() != expires:
+        raise ValueError("expires must be an ISO date string like 2027-09-30")
+    if expiry_date < clock.today():
+        raise ValueError(f"expires {expires} is already in the past")
     payload = json.dumps(
         {"machine": machine, "buyer": buyer, "expires": expires, "plan": plan},
         sort_keys=True, separators=(",", ":"),
@@ -50,6 +55,8 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     gen = sub.add_parser("gen-keys")
     gen.add_argument("--out", default="keys")
+    gen.add_argument("--force", action="store_true",
+                     help="replace an existing retail/public_key.py (invalidates every key already issued)")
     iss = sub.add_parser("issue")
     iss.add_argument("--private", default="keys/private.key")
     iss.add_argument("--machine", required=True)
@@ -64,6 +71,10 @@ def main(argv=None) -> int:
         if not public_path.parent.is_dir():
             print(f"Cannot find {public_path.parent}/ - run gen-keys from the project root.", file=sys.stderr)
             return 2
+        if public_path.is_file() and public_path.stat().st_size > 0 and not args.force:
+            print(f"Refusing to replace {public_path}: a new key pair invalidates every license key "
+                  "already issued. Pass --force only if you really mean to start over.", file=sys.stderr)
+            return 1
         # NOTE: on Windows POSIX mode bits (0o600/0o700) are largely ignored, so keep the key
         # in a folder only you can read (and back it up somewhere safe).
         try:
