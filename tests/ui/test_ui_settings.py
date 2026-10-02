@@ -187,6 +187,6 @@ def test_engine_rejection_reverts_the_switch_and_reports(screen, monkeypatch):
     assert len(screen.errors) == 1 and not screen.feature_boxes["serial"].isChecked()
 
 
-def test_settings_screen_is_registered_last():
+def test_settings_screen_is_registered_before_the_data_screen():
     from retail_ui.screens.registry import all_screens
-    assert all_screens()[-1] is SettingsScreen
+    assert all_screens()[-2] is SettingsScreen
