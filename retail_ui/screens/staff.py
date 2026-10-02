@@ -1,6 +1,6 @@
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDateEdit, QDialog, QFormLayout, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QTableView, QTabWidget,
+                               QHeaderView, QLabel, QLineEdit, QPushButton, QTableView, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from retail import clock
@@ -8,6 +8,7 @@ from retail.i18n import tr
 from retail.services import staff
 from retail_ui import fmt
 from retail_ui.errors import show_error
+from retail_ui.widgets import helpers
 from retail_ui.widgets.base import RowsModel, Screen
 from retail_ui.widgets.helpers import ok_cancel
 
@@ -258,6 +259,4 @@ class StaffScreen(Screen):
         return dialog.values() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def _confirm(self, key):
-        answer = QMessageBox.question(self, "", tr(key),
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return answer == QMessageBox.StandardButton.Yes
+        return helpers.confirm(self, key)

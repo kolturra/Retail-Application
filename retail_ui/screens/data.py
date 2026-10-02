@@ -4,13 +4,14 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+                               QListWidgetItem, QPlainTextEdit, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
 
 from retail.i18n import tr
 from retail.services import backup
 from retail_ui import APP_NAME, __version__, fmt, vendor
 from retail_ui.errors import show_error
+from retail_ui.widgets import helpers
 from retail_ui.widgets.base import Screen
 
 
@@ -208,13 +209,11 @@ class DataScreen(Screen):
         show_error(self, exc)
 
     def _confirm(self, key):
-        answer = QMessageBox.question(self, "", tr(key),
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return answer == QMessageBox.StandardButton.Yes
+        return helpers.confirm(self, key)
 
     def _pick_folder(self, start):
         return QFileDialog.getExistingDirectory(self, tr("common.browse"), start)
 
     def _notify_restart(self):
-        QMessageBox.information(self, "", tr("data.restart_notice"))
+        helpers.inform(self, "data.restart_notice")
         self.window().close()

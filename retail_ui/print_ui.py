@@ -1,10 +1,11 @@
 from pathlib import Path
 
 from PySide6.QtPrintSupport import QPrintPreviewDialog
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog
 
 from retail.i18n import tr
 from retail_ui import whatsapp
+from retail_ui.widgets import helpers
 from retail_ui.printing.bill_view import build_bill_view
 from retail_ui.printing.render import export_pdf, make_printer, print_view
 
@@ -43,10 +44,10 @@ def send_whatsapp(parent, session, bill_id, phone=None, opener=None):
     if phone is None:
         phone = view.customer_phone
     if not whatsapp.normalise_phone(phone):
-        phone, accepted = QInputDialog.getText(parent, tr("bills.whatsapp"), tr("wa.phone_prompt"))
+        phone, accepted = helpers.ask_text(parent, "bills.whatsapp", "wa.phone_prompt")
         if not accepted:
             return False
     if not whatsapp.open_whatsapp(view, phone, opener=opener):
-        QMessageBox.warning(parent, "", tr("wa.no_phone"))
+        helpers.warn(parent, "wa.no_phone")
         return False
     return True

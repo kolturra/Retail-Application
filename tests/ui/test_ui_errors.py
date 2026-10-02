@@ -53,10 +53,24 @@ def test_detail_is_english_and_names_the_type():
     assert errors.detail_for(items.ItemError("Barcode '1' is already used")) == "ItemError: Barcode '1' is already used"
 
 
-def test_show_error_builds_a_box_with_translated_text_and_details(qtbot, monkeypatch):
+def test_show_error_builds_a_box_with_translated_text(qtbot, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
-    captured = {}
-    monkeypatch.setattr(QMessageBox, "exec", lambda self: captured.update(
-        text=self.text(), details=self.detailedText()) or 0)
+    captured = []
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: captured.append(
+        (self.text(), self.informativeText(), [b.text() for b in self.buttons()])) or 0)
     errors.show_error(None, items.ItemError("dup"))
-    assert captured["text"] == i18n.tr("err.invalid_input") and "ItemError: dup" in captured["details"]
+    assert captured == [(i18n.tr("err.invalid_input"), "", [i18n.tr("common.ok"), i18n.tr("common.details")])]
+
+
+def test_details_button_reveals_the_english_detail_once(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+
+    def fake_exec(self):
+        shown.append((self.informativeText(), [b.text() for b in self.buttons()]))
+        return 0
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton",
+                        lambda self: next((b for b in self.buttons() if b.text() == i18n.tr("common.details")), None))
+    errors.show_error(None, items.ItemError("dup"))
+    assert len(shown) == 2 and shown[1] == ("ItemError: dup", [i18n.tr("common.ok")])

@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QMessageBox, QPushButton, QTableView, QVBoxLayout)
+                               QPushButton, QTableView, QVBoxLayout)
 
 from retail import segments
 from retail.i18n import tr
@@ -10,6 +10,7 @@ from retail_ui import fmt, print_ui
 from retail_ui.errors import show_error
 from retail_ui.screens import counter_dialogs as dialogs
 from retail_ui.screens.counter_logic import CounterController
+from retail_ui.widgets import helpers
 from retail_ui.widgets.base import RowsModel, Screen
 
 HEADERS = ["bill.item", "bill.qty", "bill.rate", "bill.discount", "counter.gst", "bill.total"]
@@ -317,6 +318,4 @@ class CounterScreen(Screen):
         return dialog.payments() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def _confirm(self, key):
-        answer = QMessageBox.question(self, "", tr(key),
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return answer == QMessageBox.StandardButton.Yes
+        return helpers.confirm(self, key)

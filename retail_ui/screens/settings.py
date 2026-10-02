@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QLabel, QLineEdit, QMessageBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QLabel, QLineEdit,
                                QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from retail import i18n, segments
@@ -6,6 +6,7 @@ from retail.i18n import tr
 from retail.services import shop
 from retail_ui import states, validators
 from retail_ui.errors import show_error
+from retail_ui.widgets import helpers
 from retail_ui.widgets.base import Screen
 
 FEATURES = ("weighed", "batch", "serial", "warranty", "emi", "udhaar", "low_stock_alerts")
@@ -214,9 +215,7 @@ class SettingsScreen(Screen):
         show_error(self, exc)
 
     def _warn(self, key):
-        QMessageBox.warning(self, "", tr(key))
+        helpers.warn(self, key)
 
     def _confirm(self, key):
-        answer = QMessageBox.question(self, "", tr(key),
-                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        return answer == QMessageBox.StandardButton.Yes
+        return helpers.confirm(self, key)
