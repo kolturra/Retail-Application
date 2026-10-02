@@ -1,11 +1,12 @@
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 
 import retail
 from retail import i18n
 from retail import license as lic
 from retail.services import items
-from retail_ui import vendor
+from retail_ui import fmt, vendor
 from retail_ui.screens.data import DataScreen
 from tools import license_issuer
 
@@ -238,3 +239,41 @@ def test_non_ascii_key_is_invalid_not_a_crash(screen):
 def test_registry_ends_with_the_data_screen_and_has_nine_screens():
     from retail_ui.screens.registry import all_screens
     assert all_screens()[-1] is DataScreen and len(all_screens()) == 9
+
+
+# --- fix round 1 ---------------------------------------------------------------------------------
+
+def test_activating_an_expired_key_says_so_and_stays_read_only(screen, keypair, machine_id, monkeypatch):
+    from retail import clock
+    from datetime import date
+    key = license_issuer.issue(keypair[0], machine=machine_id, buyer="Old", expires="2098-06-01")
+    monkeypatch.setattr(clock, "today", lambda: date(2099, 1, 1))  # the key is valid but already expired
+    screen.key_edit.setPlainText(key)
+    screen.activate()
+    assert screen.status_label.text() == i18n.tr("data.key_expired") != i18n.tr("data.key_ok")
+    assert i18n.tr("data.status_expired") in screen.state_label.text() and screen.session.read_only
+
+
+def test_failed_save_paths_keeps_typed_text_and_reverts_memory(screen, monkeypatch, tmp_path):
+    def boom():
+        raise OSError("disk")
+    monkeypatch.setattr(screen.session, "save_settings", boom)
+    screen.backup_dir_edit.setText(str(tmp_path / "typed"))
+    screen.save_paths()
+    assert len(screen.errors) == 1
+    assert screen.backup_dir_edit.text() == str(tmp_path / "typed")
+    assert screen.session.settings.backup_dir == "" and screen.session.settings.extra_backup_dir == ""
+
+
+def test_backup_rows_show_date_and_size_and_restore_uses_the_path(screen):
+    from datetime import date
+    screen.backup_now()
+    text = screen.backups_list.item(0).text()
+    assert fmt.date_text(date.today().isoformat()) in text and "KB" in text
+    assert screen.backups_list.item(0).data(Qt.ItemDataRole.UserRole).endswith(".db")
+
+
+def test_backup_now_works_in_recovery_mode(make_session, qtbot):
+    sc = _recovery_screen(make_session, qtbot)
+    sc.backup_now()
+    assert sc.errors == [] and sc.backups_list.count() == 1

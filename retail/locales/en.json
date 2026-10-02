@@ -269,5 +269,6 @@
   "data.new_key": "Enter a new license key",
   "data.key_ok": "License updated.",
   "data.contact": "Support: {phone}",
-  "data.restart_notice": "Backup restored. Please restart the app to continue."
+  "data.restart_notice": "Backup restored. Please restart the app to continue.",
+  "data.key_expired": "That key is valid but has expired. The app stays read-only until you enter a new key."
 }

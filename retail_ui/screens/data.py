@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -110,13 +111,20 @@ class DataScreen(Screen):
         s = self.session
         self.backup_dir_edit.setText(s.settings.backup_dir)
         self.extra_dir_edit.setText(s.settings.extra_backup_dir)
+        self._refresh_lists()
+
+    def _refresh_lists(self):
+        """Everything except the folder edits (so a failed save never overwrites what was typed)."""
+        s = self.session
         self.backups_list.clear()
         for path in backup.list_backups(s.backup_dir):
             try:
-                size = f"{path.stat().st_size // 1024} KB"
+                st = path.stat()
+                when = fmt.date_text(datetime.fromtimestamp(st.st_mtime).isoformat(timespec="minutes"))
+                detail = f"{when}, {st.st_size // 1024} KB"
             except OSError:
-                size = "?"
-            item = QListWidgetItem(f"{path.name}    ({size})")
+                detail = "?"
+            item = QListWidgetItem(f"{path.name}    ({detail})")
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             self.backups_list.addItem(item)
         lic = s.license  # never touches shop fields: the database may have no shop (recovery mode)
@@ -131,24 +139,34 @@ class DataScreen(Screen):
         """Nothing here is blocked: backups, restores, folders and activation must always work."""
 
     # --- actions ------------------------------------------------------------------
-    def _guarded(self, action):
+    def _guarded(self, action, keep_edits=False):
         try:
             action()
         except Exception as exc:
             self._show_error(exc)
         finally:
-            self.refresh()
+            self._refresh_lists() if keep_edits else self.refresh()
 
     def save_paths(self):
+        settings = self.session.settings
+        before = (settings.backup_dir, settings.extra_backup_dir)
+        failed = []
+
         def run():
             backup_dir, extra = self.backup_dir_edit.text().strip(), self.extra_dir_edit.text().strip()
-            for folder in (backup_dir, extra):
-                if folder:
-                    Path(folder).mkdir(parents=True, exist_ok=True)
-            self.session.settings.backup_dir = backup_dir
-            self.session.settings.extra_backup_dir = extra
-            self.session.save_settings()
-        self._guarded(run)
+            try:
+                for folder in (backup_dir, extra):
+                    if folder:
+                        Path(folder).mkdir(parents=True, exist_ok=True)
+                settings.backup_dir, settings.extra_backup_dir = backup_dir, extra
+                self.session.save_settings()
+            except Exception:
+                settings.backup_dir, settings.extra_backup_dir = before  # never leave memory ahead of disk
+                failed.append(True)
+                raise
+        self._guarded(run, keep_edits=True)
+        if not failed:
+            self.refresh()
 
     def backup_now(self):
         def run():
@@ -182,7 +200,7 @@ class DataScreen(Screen):
                 self.status_label.setText(tr("act.invalid"))
             else:
                 self.key_edit.clear()
-                self.status_label.setText(tr("data.key_ok"))
+                self.status_label.setText(tr("data.key_ok") if state.status == "active" else tr("data.key_expired"))
         self._guarded(run)
 
     # --- prompts ----------------------------------------------------------------------
