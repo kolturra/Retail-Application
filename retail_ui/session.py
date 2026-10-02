@@ -113,9 +113,12 @@ class AppSession(QObject):
             if clock.today() <= date.fromisoformat(state.expires):
                 return False
             self.refresh_license()
+            self._recheck_failing = False
             return True
         except Exception:
-            log.exception("licence re-check failed")
+            if not getattr(self, "_recheck_failing", False):     # a persistent fault is logged once,
+                log.exception("licence re-check failed")         # not on every tick
+            self._recheck_failing = True
             return False
 
     def activate(self, key: str):

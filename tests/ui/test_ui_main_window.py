@@ -175,11 +175,15 @@ def test_expiry_while_running_flips_everything_read_only_on_the_timer_slot(make_
     assert data_screen.isEnabled()            # the owner can still back up, restore and activate
 
 
-def test_not_expired_stays_writable(make_session, qtbot):
+def test_not_expired_stays_writable(make_session, qtbot, monkeypatch):
     session, w = _real_window(make_session, qtbot)
+    results = []
+    real = session.recheck_license
+    monkeypatch.setattr(session, "recheck_license", lambda: results.append(real()) or results[-1])
     w._check_license()
     w.nav.setCurrentRow(1)
     w.nav.setCurrentRow(0)
+    assert results == [False, False, False]                  # it ran every time and found nothing to do
     assert not session.read_only and w.banner.isHidden() and w.screens[0].add_button.isEnabled()
 
 
@@ -190,12 +194,38 @@ def test_navigating_rechecks_the_licence(make_session, qtbot, monkeypatch):
     assert session.read_only and not w.banner.isHidden() and not w.screens[0].add_button.isEnabled()
 
 
-def test_a_failing_recheck_never_raises(make_session, qtbot, monkeypatch):
+def test_a_failing_recheck_never_raises_logs_once_and_recovers(make_session, qtbot, monkeypatch, caplog):
     session, w = _real_window(make_session, qtbot)
     _past_expiry(monkeypatch)
-    monkeypatch.setattr(session, "refresh_license", lambda: (_ for _ in ()).throw(OSError("disk")))
+    real = session.refresh_license
+
+    def boom():
+        raise OSError("disk")
+    monkeypatch.setattr(session, "refresh_license", boom)
+    with caplog.at_level("ERROR", logger="retail_ui"):
+        for _ in range(3):
+            w._check_license()
+        w.nav.setCurrentRow(1)
+    assert not session.read_only and w.screens[0].add_button.isEnabled()      # unchanged
+    assert len([r for r in caplog.records if "re-check failed" in r.getMessage()]) == 1
+    monkeypatch.setattr(session, "refresh_license", real)
+    w._check_license()                                                          # a later tick recovers
+    assert session.read_only and not w.screens[0].add_button.isEnabled()
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_expiry_with_a_missing_or_corrupt_licence_file_is_read_only_not_a_crash(
+        make_session, qtbot, monkeypatch, damage):
+    session, w = _real_window(make_session, qtbot)
+    path = session.paths.license_path
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(bytes([0xff, 0xfe, 0x00]) + b" not a key")
+    _past_expiry(monkeypatch)
     w._check_license()
-    w.nav.setCurrentRow(1)
+    assert session.read_only and not w.banner.isHidden()
+    assert not w.screens[0].add_button.isEnabled() and w.screens[1].isEnabled()
 
 
 def test_the_timer_runs_at_the_given_interval_and_stops_on_close(make_session, qtbot, monkeypatch):
