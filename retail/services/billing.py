@@ -1,0 +1,566 @@
+"""Sale bills. A bill is built as 'held', finalized once, and never edited afterwards.
+Money is integer paise; quantity is integer milli-units."""
+from datetime import date, datetime
+
+from retail import clock, money
+from retail.db import transaction
+from retail.guard import writes
+from retail.services import audit, gst, reports, shop, stock
+
+PAYMENT_MODES = ("cash", "upi", "card", "emi", "credit")
+REFUND_MODES = ("cash", "upi", "card", "credit")
+# Per-line money columns a return copies (pro-rata) from the original sale line.
+_RETURN_COMPONENTS = ("amount_paise", "taxable_paise", "cgst_paise", "sgst_paise", "igst_paise",
+                      "total_paise")
+
+
+class BillingError(ValueError):
+    pass
+
+
+class SerialUnavailable(BillingError):
+    pass
+
+
+def _bill(conn, bill_id, *, status=None):
+    row = conn.execute("SELECT * FROM bill WHERE id = ?", (bill_id,)).fetchone()
+    if row is None:
+        raise BillingError("No such bill")
+    if status is not None and row["status"] != status:
+        raise BillingError(f"Bill is {row['status']}, expected {status}")
+    return row
+
+
+def _item(conn, item_id):
+    row = conn.execute("SELECT * FROM item WHERE id = ? AND active = 1", (item_id,)).fetchone()
+    if row is None:
+        raise BillingError("No such item")
+    return row
+
+
+def _check_party(conn, party_id):
+    if party_id is not None and conn.execute(
+        "SELECT 1 FROM party WHERE id = ?", (party_id,)
+    ).fetchone() is None:
+        raise BillingError("No such party")
+
+
+def _next_number(conn, name, prefix):
+    conn.execute(
+        "INSERT INTO counter(name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1",
+        (name,),
+    )
+    value = conn.execute("SELECT value FROM counter WHERE name = ?", (name,)).fetchone()[0]
+    return f"{prefix}{value:06d}"
+
+
+def _retax(conn, bill_id):
+    """Recompute every line's tax and the bill totals from the stored line amounts."""
+    bill = _bill(conn, bill_id)
+    s = shop.get_shop(conn)
+    party_state = None
+    if bill["party_id"] is not None:
+        party_state = conn.execute(
+            "SELECT state_code FROM party WHERE id = ?", (bill["party_id"],)
+        ).fetchone()["state_code"]
+    intra = gst.is_intra_state(s["state_code"], party_state)
+    # stored with the split it explains, so a frozen invoice can never contradict itself
+    place = gst.place_of_supply(s["state_code"], party_state) if bill["gst_mode"] == "gst" else None
+    inclusive = bool(s["price_includes_gst"])
+    taxable = cgst = sgst = igst = grand = 0
+    for line in conn.execute(
+        "SELECT id, amount_paise, gst_rate_bp FROM bill_line WHERE bill_id = ?", (bill_id,)
+    ).fetchall():
+        rate = line["gst_rate_bp"] if bill["gst_mode"] == "gst" else 0
+        t = gst.split_line(line["amount_paise"], rate, inclusive=inclusive, intra_state=intra)
+        conn.execute(
+            """UPDATE bill_line SET taxable_paise=?, cgst_paise=?, sgst_paise=?, igst_paise=?, total_paise=?
+               WHERE id = ?""",
+            (t.taxable, t.cgst, t.sgst, t.igst, t.total, line["id"]),
+        )
+        taxable += t.taxable
+        cgst += t.cgst
+        sgst += t.sgst
+        igst += t.igst
+        grand += t.total
+    rounded, round_off = money.round_to_rupee(grand)
+    conn.execute(
+        """UPDATE bill SET taxable_paise=?, cgst_paise=?, sgst_paise=?, igst_paise=?,
+               round_off_paise=?, total_paise=?, place_of_supply_state=? WHERE id = ?""",
+        (taxable, cgst, sgst, igst, round_off, rounded, place, bill_id),
+    )
+
+
+def _batch_remaining(conn, bill_id, unit_id):
+    on_bill = conn.execute(
+        "SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND unit_id = ?",
+        (bill_id, unit_id),
+    ).fetchone()[0]
+    return stock.unit_on_hand(conn, unit_id) - on_bill
+
+
+def _choose_batch(conn, bill_id, item_id, qty_milli, unit_id, policy):
+    """Pick or validate the batch for a line. A line is never split across batches."""
+    if unit_id is not None:
+        if conn.execute(
+            "SELECT 1 FROM stock_unit WHERE id = ? AND item_id = ? AND serial IS NULL AND batch_no IS NOT NULL",
+            (unit_id, item_id),
+        ).fetchone() is None:
+            raise BillingError("That batch does not belong to this item")
+        if _batch_remaining(conn, bill_id, unit_id) < qty_milli and policy == "block":
+            raise stock.InsufficientStock("Not enough stock in that batch")
+        return unit_id
+    candidates = stock.batches_in_expiry_order(conn, item_id)
+    remaining = {u: _batch_remaining(conn, bill_id, u) for u in candidates}
+    for u in candidates:
+        if remaining[u] >= qty_milli:
+            return u
+    if policy == "block":
+        raise stock.InsufficientStock("No single batch has enough stock")
+    for u in candidates:
+        if remaining[u] > 0:
+            return u
+    raise BillingError("No batch in stock for this item")
+
+
+@writes
+def start_bill(conn, *, party_id=None):
+    s = shop.get_shop(conn)
+    _check_party(conn, party_id)
+    with transaction(conn):
+        cur = conn.execute(
+            "INSERT INTO bill(kind, status, party_id, gst_mode, created_at) VALUES ('sale','held',?,?,?)",
+            (party_id, "gst" if s["gst_enabled"] else "estimate", clock.now_iso()),
+        )
+    return cur.lastrowid
+
+
+@writes
+def add_line(conn, bill_id, item_id, qty_milli=1000, *, serial=None, unit_id=None,
+             discount_paise=0, rate_paise=None):
+    for label, value, optional in (("Quantity", qty_milli, False), ("Discount", discount_paise, False),
+                                   ("Rate", rate_paise, True), ("Unit", unit_id, True)):
+        if value is None and optional:
+            continue
+        if type(value) is not int:
+            raise BillingError(f"{label} must be a whole number")
+    with transaction(conn):
+        bill = _bill(conn, bill_id, status="held")
+        if bill["kind"] != "sale":
+            raise BillingError("Lines can only be added to a sale bill")
+        item = _item(conn, item_id)
+        if qty_milli <= 0:
+            raise BillingError("Quantity must be greater than zero")
+        if discount_paise < 0:
+            raise BillingError("Discount cannot be negative")
+        tracking = item["tracking"]
+        if tracking != "weighed" and qty_milli % 1000:
+            raise BillingError("Only weighed items can be sold in fractions")
+        s = shop.get_shop(conn)
+        if tracking == "serial":
+            if qty_milli != 1000:
+                raise BillingError("Serial-tracked items are sold one unit per line")
+            unit = stock.find_serial(conn, item_id, serial or "")
+            if unit is None or unit["status"] != "in_stock":
+                raise SerialUnavailable(f"Serial {serial!r} is not in stock")
+            if conn.execute(
+                "SELECT 1 FROM bill_line WHERE bill_id = ? AND unit_id = ?", (bill_id, unit["id"])
+            ).fetchone():
+                raise SerialUnavailable("That serial is already on this bill")
+            unit_id = unit["id"]
+        else:
+            if tracking == "batch":
+                unit_id = _choose_batch(conn, bill_id, item_id, qty_milli, unit_id, s["oversell_policy"])
+            else:
+                unit_id = None
+                already = conn.execute(
+                    "SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND item_id = ?",
+                    (bill_id, item_id),
+                ).fetchone()[0]
+                stock.check_available(conn, item_id, already + qty_milli, s["oversell_policy"])
+        rate = item["sell_price_paise"] if rate_paise is None else rate_paise
+        if rate < 0:
+            raise BillingError("Rate cannot be negative")
+        amount = money.line_amount(rate, qty_milli) - discount_paise
+        if amount < 0:
+            raise BillingError("Discount is larger than the line amount")
+        cur = conn.execute(
+            """INSERT INTO bill_line(bill_id, item_id, unit_id, qty_milli, rate_paise, discount_paise,
+                   amount_paise, gst_rate_bp, hsn) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (bill_id, item_id, unit_id, qty_milli, rate, discount_paise, amount, item["gst_rate_bp"],
+             item["hsn"] or ""),     # '' = no HSN at sale; NULL only marks pre-snapshot rows
+        )
+        _retax(conn, bill_id)
+    return cur.lastrowid
+
+
+@writes
+def remove_line(conn, bill_id, line_id):
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        cur = conn.execute("DELETE FROM bill_line WHERE id = ? AND bill_id = ?", (line_id, bill_id))
+        if cur.rowcount == 0:
+            raise BillingError("No such line on this bill")
+        _retax(conn, bill_id)
+
+
+@writes
+def set_party(conn, bill_id, party_id):
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        _check_party(conn, party_id)
+        conn.execute("UPDATE bill SET party_id = ? WHERE id = ?", (party_id, bill_id))
+        _retax(conn, bill_id)
+
+
+def get_bill(conn, bill_id):
+    bill = _bill(conn, bill_id)
+    lines = conn.execute("SELECT * FROM bill_line WHERE bill_id = ? ORDER BY id", (bill_id,)).fetchall()
+    return {"bill": bill, "lines": lines}
+
+
+def list_held(conn):
+    return conn.execute(
+        "SELECT * FROM bill WHERE kind = 'sale' AND status = 'held' ORDER BY id"
+    ).fetchall()
+
+
+@writes
+def cancel_held(conn, bill_id):
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        conn.execute("UPDATE bill SET status = 'cancelled' WHERE id = ?", (bill_id,))
+        audit.log(conn, "cancel_held", "bill", bill_id)
+
+
+@writes
+def finalize(conn, bill_id, payments, *, today=None):
+    """Finish a held sale bill. `payments` is [(mode, amount_paise), ...]."""
+    payments = list(payments)  # a generator must not be silently exhausted by validation
+    if today is not None and not (isinstance(today, date) and not isinstance(today, datetime)):
+        raise BillingError("today must be a date")
+    for entry in payments:
+        if type(entry) not in (tuple, list) or len(entry) != 2:
+            raise BillingError("Each payment must be a (mode, amount) pair")
+        if type(entry[1]) is not int:
+            raise BillingError("Payment amount must be a whole number of paise")
+    today = today or clock.today()
+    with transaction(conn):
+        bill = _bill(conn, bill_id, status="held")
+        if bill["kind"] != "sale":
+            raise BillingError("Only sale bills are finalized here")
+        lines = conn.execute(
+            """SELECT l.*, i.tracking, i.warranty_months FROM bill_line l
+               JOIN item i ON i.id = l.item_id WHERE l.bill_id = ? ORDER BY l.id""",
+            (bill_id,),
+        ).fetchall()
+        if not lines:
+            raise BillingError("Cannot finalize an empty bill")
+        for mode, amount in payments:
+            if mode not in PAYMENT_MODES:
+                raise BillingError(f"Unknown payment mode {mode!r}")
+            if amount <= 0:
+                raise BillingError("Each payment must be greater than zero")
+        if sum(amount for _, amount in payments) != bill["total_paise"]:
+            raise BillingError("Payments must add up exactly to the bill total")
+        if any(mode == "credit" for mode, _ in payments) and bill["party_id"] is None:
+            raise BillingError("Credit sales need a customer")
+
+        policy = shop.get_shop(conn)["oversell_policy"]
+        needed = {}
+        per_unit = {}
+        for line in lines:
+            if line["tracking"] == "serial":
+                unit = conn.execute(
+                    "SELECT status FROM stock_unit WHERE id = ?", (line["unit_id"],)
+                ).fetchone()
+                if unit is None or unit["status"] != "in_stock":
+                    raise SerialUnavailable("A serial on this bill is no longer in stock")
+            else:
+                needed[line["item_id"]] = needed.get(line["item_id"], 0) + line["qty_milli"]
+                if line["unit_id"] is not None:
+                    per_unit[line["unit_id"]] = per_unit.get(line["unit_id"], 0) + line["qty_milli"]
+        for item_id, qty in needed.items():
+            stock.check_available(conn, item_id, qty, policy)
+        if policy == "block":
+            for unit_id, qty in per_unit.items():
+                if stock.unit_on_hand(conn, unit_id) < qty:
+                    raise stock.InsufficientStock("Not enough stock in a batch on this bill")
+
+        bill_no = _next_number(conn, "sale", "S")
+        now = clock.now_iso()
+        conn.execute(
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
+            (bill_no, now, bill_id),
+        )
+        for line in lines:
+            stock._record(conn, line["item_id"], -line["qty_milli"], "sale", "bill", bill_id, line["unit_id"])
+            if line["tracking"] == "serial":
+                conn.execute("UPDATE stock_unit SET status = 'sold' WHERE id = ?", (line["unit_id"],))
+                if line["warranty_months"]:
+                    end = clock.add_months(today, line["warranty_months"])
+                    conn.execute(
+                        "INSERT INTO warranty(unit_id, bill_id, start_date, end_date) VALUES (?,?,?,?)",
+                        (line["unit_id"], bill_id, today.isoformat(), end.isoformat()),
+                    )
+        for mode, amount in payments:
+            conn.execute(
+                "INSERT INTO payment(bill_id, mode, amount_paise, created_at) VALUES (?,?,?,?)",
+                (bill_id, mode, amount, now),
+            )
+        audit.log(conn, "finalize", "bill", bill_id, bill_no)
+    return bill_no
+
+
+def _return_part(ol, done, qty):
+    """Money components of returning `qty` from original line `ol`, given what earlier final
+    returns already took (`done`). The quantity that completes the line takes the exact remainder
+    (no drift). A partial quantity pro-rates the line TOTAL and TAX and derives taxable = total - tax,
+    so total == taxable + cgst + sgst + igst always holds."""
+    remaining = ol["qty_milli"] - done["qty_milli"]
+    if qty == remaining:
+        return {c: ol[c] - done[c] for c in _RETURN_COMPONENTS}
+
+    def share(value):
+        return (2 * value * qty + ol["qty_milli"]) // (2 * ol["qty_milli"])
+
+    total = share(ol["total_paise"])
+    tax = share(ol["cgst_paise"] + ol["sgst_paise"] + ol["igst_paise"])
+    if ol["igst_paise"]:
+        cgst, sgst, igst = 0, 0, tax
+    else:
+        cgst = min(share(ol["cgst_paise"]), tax)
+        sgst, igst = tax - cgst, 0
+    return {"amount_paise": share(ol["amount_paise"]), "taxable_paise": total - tax,
+            "cgst_paise": cgst, "sgst_paise": sgst, "igst_paise": igst, "total_paise": total}
+
+
+@writes
+def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
+    """returns: [(original_line_id, qty_milli), ...]. Creates and finalizes a return bill.
+
+    Taxes are never recomputed from current shop/party settings: each return line takes its
+    taxable/CGST/SGST/IGST/total from the ORIGINAL line's stored components (pro-rata for a part,
+    original minus earlier returns for the quantity that completes the line), so a full reversal
+    always nets the original sale to zero in the GST reports."""
+    if refund_mode not in REFUND_MODES:
+        raise BillingError(f"refund_mode must be one of {REFUND_MODES}")
+    returns = list(returns)  # a generator must not be silently exhausted by validation
+    if not returns:
+        raise BillingError("Nothing to return")
+    for entry in returns:
+        if (type(entry) not in (tuple, list) or len(entry) != 2
+                or type(entry[0]) is not int or type(entry[1]) is not int):
+            raise BillingError("Each return must be a (line_id, qty_milli) pair of whole numbers")
+    line_ids = [line_id for line_id, _ in returns]
+    if len(set(line_ids)) != len(line_ids):
+        raise BillingError("The same line was listed twice")
+    with transaction(conn):
+        orig = _bill(conn, original_bill_id, status="final")
+        if orig["kind"] != "sale":
+            raise BillingError("Only sale bills can be returned")
+        if refund_mode == "credit" and orig["party_id"] is None:
+            raise BillingError("Credit refunds need a customer")
+        now = clock.now_iso()
+        return_id = conn.execute(
+            """INSERT INTO bill(kind, status, party_id, ref_bill_id, gst_mode, created_at)
+               VALUES ('sale_return','held',?,?,?,?)""",
+            (orig["party_id"], original_bill_id, orig["gst_mode"], now),
+        ).lastrowid
+        for line_id, qty in returns:
+            if qty <= 0:
+                raise BillingError("Return quantity must be greater than zero")
+            ol = conn.execute(
+                "SELECT * FROM bill_line WHERE id = ? AND bill_id = ?", (line_id, original_bill_id)
+            ).fetchone()
+            if ol is None:
+                raise BillingError("That line is not on the original bill")
+            done = conn.execute(
+                f"""SELECT COALESCE(SUM(l.qty_milli), 0) AS qty_milli,
+                          {', '.join(f'COALESCE(SUM(l.{c}), 0) AS {c}' for c in _RETURN_COMPONENTS)}
+                   FROM bill_line l JOIN bill b ON b.id = l.bill_id
+                   WHERE l.ref_line_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
+                (line_id,),
+            ).fetchone()
+            item_tracking = conn.execute(
+                "SELECT tracking FROM item WHERE id = ?", (ol["item_id"],)
+            ).fetchone()["tracking"]
+            if item_tracking == "serial" and qty != ol["qty_milli"]:
+                raise BillingError("Serial items must be returned whole")
+            remaining = ol["qty_milli"] - done["qty_milli"]
+            if qty > remaining:
+                raise BillingError("Cannot return more than was sold")
+            part = _return_part(ol, done, qty)
+            # Inserting into a still-held bill is allowed by the immutability triggers.
+            conn.execute(
+                """INSERT INTO bill_line(bill_id, item_id, unit_id, ref_line_id, qty_milli, rate_paise,
+                       discount_paise, amount_paise, gst_rate_bp, taxable_paise, cgst_paise,
+                       sgst_paise, igst_paise, total_paise, hsn) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)""",
+                (return_id, ol["item_id"], ol["unit_id"], line_id, qty, ol["rate_paise"],
+                 part["amount_paise"], ol["gst_rate_bp"], part["taxable_paise"], part["cgst_paise"],
+                 part["sgst_paise"], part["igst_paise"], part["total_paise"], ol["hsn"]),
+            )
+        # Refund policy (all computed while the return is still held, before the single
+        # held -> final update):
+        #   line_sum    = this return's line totals (taken from the original sale's tax split)
+        #   prior_total = refunds of earlier final returns of this bill; prior_lines = their line totals
+        #   target      = original total if this return completes the bill (every original line fully
+        #                 returned, counting this return), else
+        #                 min(round_to_rupee(prior_lines + line_sum), original total)
+        #   refund      = max(target - prior_total, 0); round_off = refund - line_sum
+        # So a refund is never negative, cumulative refunds never exceed what the customer paid,
+        # and once everything is back they equal it exactly. Any return after the first can carry a
+        # round-off of up to about +/-1 rupee: it is the difference between the cumulative rounding
+        # of all returns so far and of the earlier ones.
+        taxable, cgst, sgst, igst, line_sum = conn.execute(
+            """SELECT COALESCE(SUM(taxable_paise), 0), COALESCE(SUM(cgst_paise), 0),
+                      COALESCE(SUM(sgst_paise), 0), COALESCE(SUM(igst_paise), 0),
+                      COALESCE(SUM(total_paise), 0)
+               FROM bill_line WHERE bill_id = ?""",
+            (return_id,),
+        ).fetchone()
+        prior_total, prior_lines = conn.execute(
+            """SELECT COALESCE(SUM(b.total_paise), 0),
+                      COALESCE(SUM((SELECT COALESCE(SUM(l.total_paise), 0) FROM bill_line l
+                                    WHERE l.bill_id = b.id)), 0)
+               FROM bill b WHERE b.ref_bill_id = ? AND b.kind = 'sale_return' AND b.status = 'final'""",
+            (original_bill_id,),
+        ).fetchone()
+        outstanding = conn.execute(
+            """SELECT COUNT(*) FROM bill_line ol
+               WHERE ol.bill_id = ? AND ol.qty_milli != (
+                   SELECT COALESCE(SUM(l.qty_milli), 0) FROM bill_line l JOIN bill b ON b.id = l.bill_id
+                   WHERE l.ref_line_id = ol.id AND b.kind = 'sale_return'
+                     AND (b.status = 'final' OR b.id = ?))""",
+            (original_bill_id, return_id),
+        ).fetchone()[0]
+        if outstanding == 0:
+            target = orig["total_paise"]
+        else:
+            target = min(money.round_to_rupee(prior_lines + line_sum)[0], orig["total_paise"])
+        total = max(target - prior_total, 0)
+        conn.execute(
+            """UPDATE bill SET taxable_paise=?, cgst_paise=?, sgst_paise=?, igst_paise=?,
+                   round_off_paise=?, total_paise=? WHERE id = ?""",
+            (taxable, cgst, sgst, igst, total - line_sum, total, return_id),
+        )
+        bill_no = _next_number(conn, "sale_return", "R")
+        lines = conn.execute(
+            """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
+               WHERE l.bill_id = ?""",
+            (return_id,),
+        ).fetchall()
+        for line in lines:
+            stock._record(conn, line["item_id"], line["qty_milli"], "sale_return", "bill", return_id,
+                          line["unit_id"])
+            if line["tracking"] == "serial":
+                conn.execute("UPDATE stock_unit SET status = 'in_stock' WHERE id = ?", (line["unit_id"],))
+                conn.execute("DELETE FROM warranty WHERE unit_id = ?", (line["unit_id"],))
+        if total > 0:
+            conn.execute(
+                "INSERT INTO payment(bill_id, mode, amount_paise, created_at) VALUES (?,?,?,?)",
+                (return_id, refund_mode, total, now),
+            )
+        conn.execute(
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ?, place_of_supply_state = ?"
+            " WHERE id = ?",
+            (bill_no, now, orig["place_of_supply_state"], return_id),
+        )
+        audit.log(conn, "return", "bill", return_id, f"{bill_no} against bill {original_bill_id}")
+    return return_id
+
+
+def get_bill_detail(conn, bill_id):
+    bill = _bill(conn, bill_id)
+    party = None
+    if bill["party_id"] is not None:
+        party = conn.execute("SELECT * FROM party WHERE id = ?", (bill["party_id"],)).fetchone()
+    lines = conn.execute(
+        """SELECT l.id, l.bill_id, l.item_id, l.unit_id, l.ref_line_id, l.qty_milli, l.rate_paise,
+                  l.discount_paise, l.amount_paise, l.gst_rate_bp, l.taxable_paise, l.cgst_paise,
+                  l.sgst_paise, l.igst_paise, l.total_paise, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, CASE WHEN l.hsn IS NULL THEN i.hsn ELSE l.hsn END AS hsn,
+                  u.serial AS serial, u.batch_no AS batch_no
+           FROM bill_line l JOIN item i ON i.id = l.item_id
+           LEFT JOIN stock_unit u ON u.id = l.unit_id
+           WHERE l.bill_id = ? ORDER BY l.id""",
+        (bill_id,),
+    ).fetchall()
+    payments = conn.execute("SELECT * FROM payment WHERE bill_id = ? ORDER BY id", (bill_id,)).fetchall()
+    warranties = conn.execute(
+        """SELECT w.*, u.serial AS serial FROM warranty w JOIN stock_unit u ON u.id = w.unit_id
+           WHERE w.bill_id = ? ORDER BY w.id""",
+        (bill_id,),
+    ).fetchall()
+    return {"bill": bill, "party": party, "lines": lines, "payments": payments, "warranties": warranties}
+
+
+def list_bills(conn, start, end, *, search=""):
+    reports.check_range(start, end)
+    search = (search or "").strip()
+    return conn.execute(
+        """SELECT b.id, b.bill_no, b.kind, b.finalized_at, date(b.finalized_at) AS bill_date,
+                  COALESCE(p.name, '') AS party, b.total_paise
+           FROM bill b LEFT JOIN party p ON p.id = b.party_id
+           WHERE b.status = 'final' AND date(b.finalized_at) BETWEEN ? AND ?
+             AND (? = '' OR instr(lower(b.bill_no), lower(?)) > 0
+                  OR instr(lower(COALESCE(p.name, '')), lower(?)) > 0)
+           ORDER BY b.finalized_at DESC, b.id DESC""",
+        (start, end, search, search, search),
+    ).fetchall()
+
+
+@writes
+def set_line_discount(conn, bill_id, line_id, discount_paise):
+    if type(discount_paise) is not int or discount_paise < 0:
+        raise BillingError("Discount must be a non-negative whole number of paise")
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        line = conn.execute("SELECT * FROM bill_line WHERE id = ? AND bill_id = ?", (line_id, bill_id)).fetchone()
+        if line is None:
+            raise BillingError("No such line on this bill")
+        amount = money.line_amount(line["rate_paise"], line["qty_milli"]) - discount_paise
+        if amount < 0:
+            raise BillingError("Discount is larger than the line amount")
+        conn.execute("UPDATE bill_line SET discount_paise = ?, amount_paise = ? WHERE id = ?",
+                     (discount_paise, amount, line_id))
+        _retax(conn, bill_id)
+
+
+@writes
+def set_line_batch(conn, bill_id, line_id, unit_id):
+    """Override the batch auto-selected for a batch-tracked line on a held bill. The batch must belong to
+    the line's item and, under the 'block' policy, hold enough stock for the whole line (a line is never
+    split). Like add_line, an expired batch is not refused: expiry is shown to the user, not enforced."""
+    if type(unit_id) is not int:
+        raise BillingError("Batch must be a whole number id")
+    with transaction(conn):
+        bill = _bill(conn, bill_id, status="held")
+        if bill["kind"] != "sale":
+            raise BillingError("Only sale bills have batches to change")
+        line = conn.execute(
+            """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
+               WHERE l.id = ? AND l.bill_id = ?""", (line_id, bill_id)).fetchone()
+        if line is None:
+            raise BillingError("No such line on this bill")
+        if line["tracking"] != "batch":
+            raise BillingError("Only batch-tracked lines have a batch")
+        if line["unit_id"] == unit_id:
+            return
+        policy = shop.get_shop(conn)["oversell_policy"]
+        _choose_batch(conn, bill_id, line["item_id"], line["qty_milli"], unit_id, policy)
+        conn.execute("UPDATE bill_line SET unit_id = ? WHERE id = ?", (unit_id, line_id))
+
+
+def returnable_lines(conn, bill_id):
+    bill = _bill(conn, bill_id, status="final")
+    if bill["kind"] != "sale":
+        raise BillingError("Only sale bills can be returned")
+    rows = conn.execute(
+        """SELECT l.id AS line_id, l.item_id, i.name AS item_name, i.tracking, l.qty_milli, l.total_paise,
+                  COALESCE((SELECT SUM(r.qty_milli) FROM bill_line r JOIN bill rb ON rb.id = r.bill_id
+                            WHERE r.ref_line_id = l.id AND rb.kind = 'sale_return' AND rb.status = 'final'), 0)
+                      AS returned_milli
+           FROM bill_line l JOIN item i ON i.id = l.item_id WHERE l.bill_id = ? ORDER BY l.id""",
+        (bill_id,),
+    ).fetchall()
+    return [{**dict(r), "remaining_milli": r["qty_milli"] - r["returned_milli"]} for r in rows]

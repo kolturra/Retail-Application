@@ -1,0 +1,17 @@
+{
+  "name": "grocery",
+  "label": "Grocery / Kirana / General Store",
+  "default_tracking": "none",
+  "units": ["pcs", "kg", "g", "litre", "ml", "packet"],
+  "bill_layout": "thermal_80",
+  "gst_slabs_bp": [0, 500, 1800, 4000],
+  "features": {
+    "weighed": true,
+    "batch": false,
+    "serial": false,
+    "warranty": false,
+    "emi": false,
+    "udhaar": true,
+    "low_stock_alerts": true
+  }
+}

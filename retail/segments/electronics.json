@@ -1,0 +1,17 @@
+{
+  "name": "electronics",
+  "label": "Electronics / Mobile / Appliances",
+  "default_tracking": "serial",
+  "units": ["pcs"],
+  "bill_layout": "a4",
+  "gst_slabs_bp": [0, 500, 1800, 4000],
+  "features": {
+    "weighed": false,
+    "batch": false,
+    "serial": true,
+    "warranty": true,
+    "emi": true,
+    "udhaar": false,
+    "low_stock_alerts": false
+  }
+}
