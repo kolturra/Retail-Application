@@ -200,5 +200,16 @@
   "party.type_both": "दोनों",
   "party.none_state": "— तय नहीं —",
   "party.receive": "भुगतान लें",
-  "party.dialog_title": "ग्राहक / सप्लायर"
+  "party.dialog_title": "ग्राहक / सप्लायर",
+  "rep.tab_sales": "बिक्री रजिस्टर",
+  "rep.tab_gst": "GST सारांश",
+  "rep.tab_day": "दैनिक सारांश",
+  "rep.rate": "GST दर",
+  "rep.sales": "बिक्री",
+  "rep.returns": "वापसी",
+  "rep.net": "शुद्ध बिक्री",
+  "rep.by_mode": "भुगतान के तरीके से",
+  "rep.export_sales": "बिक्री रजिस्टर एक्सपोर्ट करें (CSV)",
+  "rep.export_gst": "GST सारांश एक्सपोर्ट करें (CSV)",
+  "rep.exported": "सहेजा गया: {path}"
 }

@@ -200,5 +200,16 @@
   "party.type_both": "Both",
   "party.none_state": "— not set —",
   "party.receive": "Receive payment",
-  "party.dialog_title": "Customer / supplier"
+  "party.dialog_title": "Customer / supplier",
+  "rep.tab_sales": "Sales register",
+  "rep.tab_gst": "GST summary",
+  "rep.tab_day": "Daily summary",
+  "rep.rate": "GST rate",
+  "rep.sales": "Sales",
+  "rep.returns": "Returns",
+  "rep.net": "Net sales",
+  "rep.by_mode": "By payment mode",
+  "rep.export_sales": "Export sales register (CSV)",
+  "rep.export_gst": "Export GST summary (CSV)",
+  "rep.exported": "Saved: {path}"
 }

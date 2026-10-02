@@ -200,5 +200,16 @@
   "party.type_both": "రెండూ",
   "party.none_state": "— సెట్ చేయలేదు —",
   "party.receive": "చెల్లింపు స్వీకరించు",
-  "party.dialog_title": "కస్టమర్ / సప్లయర్"
+  "party.dialog_title": "కస్టమర్ / సప్లయర్",
+  "rep.tab_sales": "అమ్మకాల రిజిస్టర్",
+  "rep.tab_gst": "GST సారాంశం",
+  "rep.tab_day": "రోజువారీ సారాంశం",
+  "rep.rate": "GST రేటు",
+  "rep.sales": "అమ్మకాలు",
+  "rep.returns": "వాపసులు",
+  "rep.net": "నికర అమ్మకాలు",
+  "rep.by_mode": "చెల్లింపు విధానం ప్రకారం",
+  "rep.export_sales": "అమ్మకాల రిజిస్టర్ ఎక్స్‌పోర్ట్ చేయండి (CSV)",
+  "rep.export_gst": "GST సారాంశం ఎక్స్‌పోర్ట్ చేయండి (CSV)",
+  "rep.exported": "సేవ్ అయింది: {path}"
 }
