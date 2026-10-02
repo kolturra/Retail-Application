@@ -270,5 +270,6 @@
   "data.key_ok": "License updated.",
   "data.contact": "Support: {phone}",
   "data.restart_notice": "Backup restored. Please restart the app to continue.",
-  "data.key_expired": "That key is valid but has expired. The app stays read-only until you enter a new key."
+  "data.key_expired": "That key is valid but has expired. The app stays read-only until you enter a new key.",
+  "app.recovery_notice": "Recovery mode: the licence has expired and this computer has no shop set up. Restore a backup or enter a new licence key below, then restart the app."
 }

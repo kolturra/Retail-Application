@@ -12,9 +12,10 @@ log = logging.getLogger("retail_ui")
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, session, screen_classes, parent=None):
+    def __init__(self, session, screen_classes, parent=None, *, notice_key=None):
         super().__init__(parent)
         self.session = session
+        self.notice_key = notice_key
         self.setWindowTitle(APP_NAME)
         self.resize(1200, 760)
 
@@ -25,6 +26,10 @@ class MainWindow(QMainWindow):
         self.banner.setWordWrap(True)
         self.banner.setStyleSheet("background:#b00020;color:white;padding:6px;")
         outer.addWidget(self.banner)
+        self.notice = QLabel()  # e.g. the recovery-mode explanation; empty and hidden normally
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet("background:#fff3cd;color:#664d03;padding:6px;")
+        outer.addWidget(self.notice)
 
         body = QHBoxLayout()
         side = QVBoxLayout()
@@ -113,6 +118,8 @@ class MainWindow(QMainWindow):
     def _update_banner(self):
         self.banner.setText(tr("license.read_only"))
         self.banner.setHidden(not self.session.read_only)
+        self.notice.setText(tr(self.notice_key) if self.notice_key else "")
+        self.notice.setHidden(not self.notice_key)
 
     def _update_status(self):
         lic_state = self.session.license
