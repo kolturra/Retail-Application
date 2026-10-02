@@ -21,3 +21,4 @@ retail = ["migrations/*.sql", "locales/*.json", "segments/*.json"]
 pythonpath = ["."]
 testpaths = ["tests"]
 qt_api = "pyside6"
+markers = ["perf: timing checks with generous ceilings (grocery-sized data)"]
