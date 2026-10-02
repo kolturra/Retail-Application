@@ -9,10 +9,21 @@ from retail import money
 _NUMBER = re.compile(r"^[+-]?[0-9]+(\.[0-9]+)?$")
 
 
-def _strict(text: str, what: str) -> str:
-    cleaned = (text or "").replace("₹", "").replace(",", "").strip()
+# a comma is only accepted as a proper thousands separator: 1,234.50 (groups of 3) or the Indian
+# 1,23,456.78 that fmt.rupees() prints. "1,5" must never silently become 15.
+_GROUPED = re.compile(r"^[+-]?(\d{1,3}(,\d{3})+|\d{1,2}(,\d{2})*,\d{3})(\.[0-9]+)?$")
+
+
+def _strict(text: str, what: str, max_decimals: int | None = None) -> str:
+    cleaned = (text or "").replace("₹", "").strip()
+    if "," in cleaned:
+        if not _GROUPED.match(cleaned):
+            raise ValueError(f"Not {what}: {text!r}")
+        cleaned = cleaned.replace(",", "")
     if not _NUMBER.match(cleaned):
         raise ValueError(f"Not {what}: {text!r}")
+    if max_decimals is not None and "." in cleaned and len(cleaned.split(".")[1]) > max_decimals:
+        raise ValueError(f"Too many decimals: {text!r}")
     return cleaned
 
 
@@ -37,7 +48,7 @@ def rupees(paise: int, symbol: str = "₹") -> str:
 
 
 def parse_rupees(text: str) -> int:
-    cleaned = _strict(text, "an amount")
+    cleaned = _strict(text, "an amount", 2)
     try:
         return money.rupees_to_paise(Decimal(cleaned))
     except ArithmeticError as exc:
@@ -49,7 +60,7 @@ def qty(milli: int) -> str:
 
 
 def parse_qty(text: str) -> int:
-    cleaned = _strict(text, "a quantity")
+    cleaned = _strict(text, "a quantity", 3)
     try:
         milli = money.qty_to_milli(cleaned)
     except ArithmeticError as exc:

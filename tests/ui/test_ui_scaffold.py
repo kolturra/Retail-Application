@@ -42,12 +42,14 @@ def test_rupees_uses_indian_grouping(paise, text):
     assert fmt.rupees(paise) == text
 
 
-@pytest.mark.parametrize("text,paise", [("₹1,234.50", 123450), (" 12 ", 1200), ("0.5", 50), ("12.345", 1235)])
+@pytest.mark.parametrize("text,paise", [("₹1,234.50", 123450), (" 12 ", 1200), ("0.5", 50), ("12.34", 1234), ("₹1,23,456.78", 12345678),
+                                         ("12,34,567", 123456700), ("1,000", 100000), ("-1,234.5", -123450)])
 def test_parse_rupees(text, paise):
     assert fmt.parse_rupees(text) == paise
 
 
-@pytest.mark.parametrize("text", ["", "abc", "1.2.3", "₹", "--5", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5"])
+@pytest.mark.parametrize("text", ["", "abc", "1.2.3", "₹", "--5", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5",
+                                  "1,5", "1,50", "12,34", "1,2345", ",5", "1,,000", "1,234,5", "12.345", "1,23,45", "1,0000"])
 def test_parse_rupees_rejects_garbage(text):
     with pytest.raises(ValueError):
         fmt.parse_rupees(text)
@@ -56,9 +58,10 @@ def test_parse_rupees_rejects_garbage(text):
 def test_qty_helpers():
     assert fmt.qty(750) == "0.75" and fmt.qty(2000) == "2"
     assert fmt.parse_qty("0.75") == 750 and fmt.parse_qty(" 3 ") == 3000
-    for bad in ("", "0", "-1", "abc", "0.0001", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5"):
+    for bad in ("", "0", "-1", "abc", "0.0001", "1e5", "1e400", "NaN", "Infinity", "-Infinity", "१२", "5.", ".5", "1,5", "0.0005", "2.5555", "1,2345"):
         with pytest.raises(ValueError):
             fmt.parse_qty(bad)
+    assert fmt.parse_qty("1,250.125") == 1250125 and fmt.parse_qty("2.500") == 2500
 
 
 def test_date_text():
