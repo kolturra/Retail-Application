@@ -142,3 +142,16 @@ def test_refresh_license_applies_the_guard_when_expired(make_session, monkeypatc
     monkeypatch.setattr(clock, "today", lambda: date(2100, 1, 1))
     s.refresh_license()
     assert s.read_only and guard.is_read_only()
+
+
+def test_language_can_still_be_switched_after_the_licence_expires(make_session, qtbot):
+    from retail import license as lic
+    s = make_session()
+    s.license = lic.LicenseState("expired", expires="2020-01-01")
+    guard.set_read_only(True)
+    with qtbot.waitSignal(s.language_changed):
+        s.set_language("te")
+    assert i18n.get_language() == "te"
+    assert s.shop()["language"] == "en"                      # not saved: the database is read-only
+    with pytest.raises(ValueError):
+        s.set_language("fr")

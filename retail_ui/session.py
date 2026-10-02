@@ -47,8 +47,13 @@ class AppSession(QObject):
         ui_settings.save(self.paths.settings_path, self.settings)
 
     def set_language(self, code: str) -> None:
-        shop.update_shop(self.conn, language=code)  # validates the code and persists it
-        i18n.set_language(code)
+        """Switch the screen language. After the licence expires the database is read-only, so the
+        choice then lasts for this session only instead of being refused."""
+        try:
+            shop.update_shop(self.conn, language=code)  # validates the code and persists it
+        except guard.ReadOnlyError:
+            log.info("licence expired: language %s applied for this session only", code)
+        i18n.set_language(code)  # raises ValueError for an unsupported code, before anything is emitted
         self.language_changed.emit(code)
 
     def notify_changed(self) -> None:
