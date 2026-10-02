@@ -218,7 +218,7 @@ def test_language_switch_keeps_the_bill_and_retranslates(screen):
 def test_read_only_disables_the_write_controls(screen):
     screen.apply_read_only(True)
     for name in ("entry", "customer_button", "discount_button", "hold_button", "held_button",
-                 "discard_button", "delete_button", "pay_button"):
+                 "discard_button", "delete_button", "batch_button", "pay_button"):
         assert not getattr(screen, name).isEnabled(), name
     assert all(not sc.isEnabled() for key, sc in screen.shortcut_keys.items() if key != "F10")
     assert screen.print_button.isEnabled() and screen.shortcut_keys["F10"].isEnabled()
@@ -270,7 +270,7 @@ def test_discount_applies_to_the_last_line_right_after_a_scan(screen):
 
 
 def test_function_key_shortcuts_are_registered(screen):
-    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F6", "F8", "F10", "Del", "F12"}
+    assert set(screen.shortcut_keys) == {"F2", "F3", "F4", "F5", "F6", "F7", "F8", "F10", "Del", "F12"}
 
 
 def test_refresh_after_a_restore_follows_the_new_connection(make_session, qtbot):
@@ -367,3 +367,63 @@ def test_block_policy_refuses_and_allow_policy_is_silent(screen):
     type_and_enter(screen, "8901")
     assert len(screen.errors) == 1 and isinstance(screen.errors[0], stock.InsufficientStock)
     assert screen.status_label.text() == ""
+
+
+def _milk(conn):
+    milk = items.create_item(conn, name="Milk", sell_price_paise=100, tracking="batch", barcodes=["M1"])
+    early = stock.add_unit(conn, milk, batch_no="B", expiry="2026-10-01")
+    late = stock.add_unit(conn, milk, batch_no="A", expiry="2026-12-01")
+    stock.record(conn, milk, 5_000, "purchase", unit_id=early)
+    stock.record(conn, milk, 5_000, "purchase", unit_id=late)
+    return milk, early, late
+
+
+def test_change_batch_overrides_the_auto_selected_batch(screen):
+    milk, early, late = _milk(screen.session.conn)
+    type_and_enter(screen, "M1")
+    seen = []
+    screen._ask_batch = lambda choices, current: seen.append((current, [c["id"] for c in choices])) or late
+    screen.change_batch()
+    assert seen == [(early, [early, late])] and screen.errors == []
+    assert screen.controller.detail()["lines"][0]["unit_id"] == late
+    assert screen.focusWidget() is screen.entry
+
+
+def test_change_batch_cancel_and_untracked_line_do_nothing(screen):
+    milk, early, late = _milk(screen.session.conn)
+    type_and_enter(screen, "M1")
+    screen._ask_batch = lambda choices, current: None
+    screen.change_batch()
+    assert screen.controller.detail()["lines"][0]["unit_id"] == early
+    stocked(screen.session.conn, name="Soap", barcodes=["8901"])
+    type_and_enter(screen, "8901")
+    screen._ask_batch = lambda *a: pytest.fail("no batch dialog for an untracked line")
+    screen.change_batch()
+    assert screen.status_label.text() == i18n.tr("counter.batch_not_tracked")
+
+
+def test_change_batch_reports_engine_refusals(screen):
+    from retail.services import shop
+    conn = screen.session.conn
+    milk, early, late = _milk(conn)
+    shop.update_shop(conn, oversell_policy="block")
+    type_and_enter(screen, "4*M1")
+    stock.record(conn, milk, -3_000, "adjustment", unit_id=late)     # the late batch now holds only 2
+    screen._ask_batch = lambda choices, current: late
+    screen.change_batch()
+    assert len(screen.errors) == 1 and isinstance(screen.errors[0], stock.InsufficientStock)
+    assert screen.controller.detail()["lines"][0]["unit_id"] == early
+
+
+def test_f7_is_the_batch_shortcut_and_is_disabled_when_read_only(screen):
+    milk, early, late = _milk(screen.session.conn)
+    type_and_enter(screen, "M1")
+    calls = []
+    screen._ask_batch = lambda choices, current: calls.append(current)
+    screen.shortcut_keys["F7"].activated.emit()
+    assert calls == [early] and screen.batch_button.text() == f"{i18n.tr('counter.batch')} (F7)"
+    screen.apply_read_only(True)
+    assert not screen.shortcut_keys["F7"].isEnabled() and not screen.batch_button.isEnabled()
+    i18n.set_language("hi")
+    screen.retranslate()
+    assert screen.batch_button.text() == f"{i18n.tr('counter.batch')} (F7)" and "Change" not in screen.batch_button.text()

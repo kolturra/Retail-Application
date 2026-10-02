@@ -48,8 +48,13 @@ class ReportsScreen(Screen):
         self.export_gst_button = self.bind(QPushButton(), "rep.export_gst")
         self.export_sales_button.clicked.connect(lambda _=False: self.export_sales())
         self.export_gst_button.clicked.connect(lambda _=False: self.export_gst())
-        buttons.addWidget(self.export_sales_button)
-        buttons.addWidget(self.export_gst_button)
+        self.export_stock_button = self.bind(QPushButton(), "rep.export_stock")
+        self.export_ledger_button = self.bind(QPushButton(), "rep.export_ledger")
+        self.export_stock_button.clicked.connect(lambda _=False: self.export_stock())
+        self.export_ledger_button.clicked.connect(lambda _=False: self.export_ledger())
+        for button in (self.export_sales_button, self.export_gst_button, self.export_stock_button,
+                       self.export_ledger_button):
+            buttons.addWidget(button)
         layout.addLayout(buttons)
         self.status_label = QLabel()
         layout.addWidget(self.status_label)
@@ -137,6 +142,16 @@ class ReportsScreen(Screen):
 
     def export_gst(self):
         self._export("gst_summary.csv", lambda s, e: reports.gst_summary(self.session.conn, s, e), GST_COLUMNS)
+
+    def export_stock(self):
+        """Whole stock register as of now (not date-ranged)."""
+        self._export("stock_register.csv", lambda s, e: reports.stock_register(self.session.conn),
+                     reports.STOCK_COLUMNS)
+
+    def export_ledger(self):
+        """All party ledgers (not date-ranged: a running balance needs the full history)."""
+        self._export("party_ledgers.csv", lambda s, e: reports.party_ledger(self.session.conn),
+                     reports.LEDGER_COLUMNS)
 
     # --- prompts ----------------------------------------------------------------------
     def _show_error(self, exc):

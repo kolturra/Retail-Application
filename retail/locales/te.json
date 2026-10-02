@@ -282,5 +282,11 @@
   "bill.hsn": "హెచ్ఎస్ఎన్ కోడ్",
   "bill.place_of_supply": "సరఫరా స్థలం",
   "rep.export_stock": "స్టాక్ రిజిస్టర్ ఎగుమతి చేయండి (CSV)",
-  "rep.export_ledger": "పార్టీ ఖాతా పుస్తకాలు ఎగుమతి చేయండి (CSV)"
+  "rep.export_ledger": "పార్టీ ఖాతా పుస్తకాలు ఎగుమతి చేయండి (CSV)",
+  "counter.batch": "బ్యాచ్ మార్చండి",
+  "counter.batch_not_tracked": "ఈ లైన్‌లో మార్చడానికి బ్యాచ్ లేదు",
+  "dlg.batch_title": "బ్యాచ్ ఎంచుకోండి",
+  "dlg.batch_row": "బ్యాచ్ {batch_no}  |  గడువు {expiry}  |  స్టాక్‌లో {qty}",
+  "dlg.batch_no_expiry": "లేదు",
+  "dlg.batch_expired": "గడువు ముగిసింది"
 }

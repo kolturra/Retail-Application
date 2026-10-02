@@ -282,5 +282,11 @@
   "bill.hsn": "HSN",
   "bill.place_of_supply": "Place of supply",
   "rep.export_stock": "Export stock register (CSV)",
-  "rep.export_ledger": "Export party ledgers (CSV)"
+  "rep.export_ledger": "Export party ledgers (CSV)",
+  "counter.batch": "Change batch",
+  "counter.batch_not_tracked": "This line has no batch to change",
+  "dlg.batch_title": "Choose batch",
+  "dlg.batch_row": "Batch {batch_no}  |  Expiry {expiry}  |  In stock {qty}",
+  "dlg.batch_no_expiry": "none",
+  "dlg.batch_expired": "EXPIRED"
 }

@@ -526,6 +526,29 @@ def set_line_discount(conn, bill_id, line_id, discount_paise):
         _retax(conn, bill_id)
 
 
+@writes
+def set_line_batch(conn, bill_id, line_id, unit_id):
+    """Override the batch auto-selected for a batch-tracked line on a held bill. The batch must belong to
+    the line's item and, under the 'block' policy, hold enough stock for the whole line (a line is never
+    split). Like add_line, an expired batch is not refused: expiry is shown to the user, not enforced."""
+    if type(unit_id) is not int:
+        raise BillingError("Batch must be a whole number id")
+    with transaction(conn):
+        _bill(conn, bill_id, status="held")
+        line = conn.execute(
+            """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
+               WHERE l.id = ? AND l.bill_id = ?""", (line_id, bill_id)).fetchone()
+        if line is None:
+            raise BillingError("No such line on this bill")
+        if line["tracking"] != "batch":
+            raise BillingError("Only batch-tracked lines have a batch")
+        if line["unit_id"] == unit_id:
+            return
+        policy = shop.get_shop(conn)["oversell_policy"]
+        _choose_batch(conn, bill_id, line["item_id"], line["qty_milli"], unit_id, policy)
+        conn.execute("UPDATE bill_line SET unit_id = ? WHERE id = ?", (unit_id, line_id))
+
+
 def returnable_lines(conn, bill_id):
     bill = _bill(conn, bill_id, status="final")
     if bill["kind"] != "sale":

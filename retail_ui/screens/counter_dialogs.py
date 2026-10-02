@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QPushButton, QVBoxLayout)
 
-from retail import money
+from retail import clock, money
 from retail.i18n import tr
 from retail.services import parties
 from retail_ui import fmt
@@ -321,3 +321,35 @@ class PayDialog(QDialog):
 
     def payments(self):
         return [(mode, paise) for mode, paise in self._amounts.items() if paise > 0]
+
+
+class BatchDialog(QDialog):
+    """Pick the batch for a batch-tracked line. choices: dicts from stock.batch_choices."""
+
+    def __init__(self, choices, current_id, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("dlg.batch_title"))
+        today = clock.today().isoformat()
+        layout = QVBoxLayout(self)
+        self.list = QListWidget()
+        for c in choices:
+            expiry = fmt.date_text(c["expiry"]) if c["expiry"] else tr("dlg.batch_no_expiry")
+            text = tr("dlg.batch_row", batch_no=c["batch_no"], expiry=expiry, qty=fmt.qty(c["on_hand_milli"]))
+            if c["expiry"] and c["expiry"] < today:
+                text += f"  [{tr('dlg.batch_expired')}]"
+            entry = QListWidgetItem(text)
+            entry.setData(Qt.ItemDataRole.UserRole, c["id"])
+            self.list.addItem(entry)
+            if c["id"] == current_id:
+                self.list.setCurrentItem(entry)
+        if self.list.currentRow() < 0 and self.list.count():
+            self.list.setCurrentRow(0)
+        self.list.itemDoubleClicked.connect(lambda *_: self.accept())
+        layout.addWidget(self.list)
+        box, self.ok_button = ok_cancel(self)
+        self.ok_button.setEnabled(bool(choices))
+        layout.addWidget(box)
+
+    def selected_batch_id(self):
+        item = self.list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None

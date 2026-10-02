@@ -1,5 +1,6 @@
 import pytest
 
+from retail import guard
 from retail.services import billing, items, parties, shop, stock
 from retail.services.billing import BillingError, SerialUnavailable
 
@@ -309,3 +310,89 @@ def test_clearing_party_switches_back_to_intra_state(shop_conn, soap):
     billing.add_line(shop_conn, bill_id, soap, 1000)
     billing.set_party(shop_conn, bill_id, None)
     assert totals(shop_conn, bill_id) == (10000, 900, 900, 0, 0, 11800)
+
+
+def _unit_of(conn, bill_id, line_id):
+    return next(l["unit_id"] for l in billing.get_bill(conn, bill_id)["lines"] if l["id"] == line_id)
+
+
+def test_set_line_batch_overrides_the_auto_picked_batch(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 2000)
+    assert _unit_of(shop_conn, bill_id, line) == early
+    billing.set_line_batch(shop_conn, bill_id, line, late)
+    assert _unit_of(shop_conn, bill_id, line) == late
+    billing.set_line_batch(shop_conn, bill_id, line, late)  # same batch: no-op
+    billing.finalize(shop_conn, bill_id, [("cash", 200)])
+    assert stock.unit_on_hand(shop_conn, late) == 3000 and stock.unit_on_hand(shop_conn, early) == 2000
+
+
+def test_set_line_batch_validates_batch_item_and_stock(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    other = items.create_item(shop_conn, name="Curd", sell_price_paise=100, tracking="batch")
+    other_unit = stock.add_unit(shop_conn, other, batch_no="C")
+    stock.record(shop_conn, other, 5_000, "purchase", unit_id=other_unit)
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 3000, unit_id=late)
+    with pytest.raises(BillingError):
+        billing.set_line_batch(shop_conn, bill_id, line, other_unit)   # another item's batch
+    with pytest.raises(stock.InsufficientStock):
+        billing.set_line_batch(shop_conn, bill_id, line, early)        # only 2 in that batch
+    for bad in (True, "1", None, 1.0):
+        with pytest.raises(BillingError):
+            billing.set_line_batch(shop_conn, bill_id, line, bad)
+    with pytest.raises(BillingError):
+        billing.set_line_batch(shop_conn, bill_id, 9999, early)
+    assert _unit_of(shop_conn, bill_id, line) == late
+
+
+def test_set_line_batch_counts_other_lines_on_that_batch(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    billing.add_line(shop_conn, bill_id, milk, 2000, unit_id=early)
+    line = billing.add_line(shop_conn, bill_id, milk, 1000, unit_id=late)
+    with pytest.raises(stock.InsufficientStock):
+        billing.set_line_batch(shop_conn, bill_id, line, early)
+
+
+def test_set_line_batch_allows_an_expired_batch_like_add_line(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    shop_conn.execute("UPDATE stock_unit SET expiry = '2000-01-01' WHERE id = ?", (early,))
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 1000, unit_id=late)
+    billing.set_line_batch(shop_conn, bill_id, line, early)
+    assert _unit_of(shop_conn, bill_id, line) == early
+
+
+def test_set_line_batch_rejects_untracked_lines_and_final_bills(shop_conn, soap):
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, soap)
+    with pytest.raises(BillingError):
+        billing.set_line_batch(shop_conn, bill_id, line, 1)
+    milk, early, late = _batch_item(shop_conn)
+    b2 = billing.start_bill(shop_conn)
+    l2 = billing.add_line(shop_conn, b2, milk, 1000)
+    billing.finalize(shop_conn, b2, [("cash", 100)])
+    with pytest.raises(BillingError):
+        billing.set_line_batch(shop_conn, b2, l2, late)
+
+
+def test_set_line_batch_is_blocked_when_read_only(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 1000)
+    guard.set_read_only(True)
+    try:
+        with pytest.raises(guard.ReadOnlyError):
+            billing.set_line_batch(shop_conn, bill_id, line, late)
+    finally:
+        guard.set_read_only(False)
+
+
+def test_batch_choices_lists_stocked_batches_in_expiry_order(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    empty = stock.add_unit(shop_conn, milk, batch_no="Z", expiry="2026-09-01")
+    assert [(c["id"], c["batch_no"], c["expiry"], c["on_hand_milli"]) for c in stock.batch_choices(shop_conn, milk)] == [
+        (early, "B", "2026-10-01", 2000), (late, "A", "2026-12-01", 5000)]
+    assert [c["id"] for c in stock.batch_choices(shop_conn, milk, include_unit_id=empty)][0] == empty

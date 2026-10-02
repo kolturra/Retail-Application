@@ -104,6 +104,20 @@ def batches_in_expiry_order(conn, item_id):
     return [r["id"] for r in rows]
 
 
+def batch_choices(conn, item_id, include_unit_id=None):
+    """Batches of an item a counter user may pick: positive stock (plus `include_unit_id`, e.g. the batch
+    already on a line), earliest expiry first. Each is {id, batch_no, expiry, on_hand_milli}."""
+    rows = conn.execute(
+        """SELECT u.id, u.batch_no, u.expiry,
+                  (SELECT COALESCE(SUM(qty_milli), 0) FROM stock_movement WHERE unit_id = u.id) AS on_hand_milli
+           FROM stock_unit u
+           WHERE u.item_id = ? AND u.serial IS NULL AND u.batch_no IS NOT NULL
+           ORDER BY (u.expiry IS NULL), u.expiry, u.id""",
+        (item_id,),
+    ).fetchall()
+    return [dict(r) for r in rows if r["on_hand_milli"] > 0 or r["id"] == include_unit_id]
+
+
 def check_available(conn, item_id, qty_milli, policy):
     """Return 'ok' or 'warn'; raise InsufficientStock when the policy is 'block'."""
     have = on_hand(conn, item_id)

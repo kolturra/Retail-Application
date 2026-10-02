@@ -282,5 +282,11 @@
   "bill.hsn": "एचएसएन कोड",
   "bill.place_of_supply": "आपूर्ति का स्थान",
   "rep.export_stock": "स्टॉक रजिस्टर निर्यात करें (CSV)",
-  "rep.export_ledger": "पार्टी खाता-बही निर्यात करें (CSV)"
+  "rep.export_ledger": "पार्टी खाता-बही निर्यात करें (CSV)",
+  "counter.batch": "बैच बदलें",
+  "counter.batch_not_tracked": "इस लाइन में बदलने के लिए कोई बैच नहीं है",
+  "dlg.batch_title": "बैच चुनें",
+  "dlg.batch_row": "बैच {batch_no}  |  समाप्ति {expiry}  |  स्टॉक में {qty}",
+  "dlg.batch_no_expiry": "कोई नहीं",
+  "dlg.batch_expired": "समाप्त"
 }

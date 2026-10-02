@@ -79,6 +79,16 @@ class CounterController:
     def remove_line(self, line_id):
         billing.remove_line(self.conn, self.bill_id, line_id)
 
+    def batch_options(self, line_id):
+        """(current_unit_id, choices) for a batch-tracked line, or None when the line has no batch to change."""
+        line = next((l for l in (self.detail() or {"lines": []})["lines"] if l["id"] == line_id), None)
+        if line is None or line["tracking"] != "batch":
+            return None
+        return line["unit_id"], stock.batch_choices(self.conn, line["item_id"], include_unit_id=line["unit_id"])
+
+    def set_line_batch(self, line_id, unit_id):
+        billing.set_line_batch(self.conn, self.bill_id, line_id, unit_id)
+
     def set_customer(self, party_id):
         billing.set_party(self.conn, self._ensure_bill(), party_id)
 

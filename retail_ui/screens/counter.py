@@ -57,6 +57,7 @@ class CounterScreen(Screen):
         self.held_button = self._button("counter.held", " (F4)", self.show_held, row)
         self.discard_button = self._button("counter.discard", " (F8)", self.discard_bill, row)
         self.delete_button = self._button("counter.delete_line", " (F6)", self.delete_selected_line, row)
+        self.batch_button = self._button("counter.batch", " (F7)", self.change_batch, row)
         self.print_button = self._button("counter.print_last", " (F10)", self.print_last, row)
         self.pay_button = self._button("counter.pay", " (F12)", self.pay, row)
         self.pay_button.setStyleSheet("font-weight: bold; padding: 8px 18px;")
@@ -65,7 +66,7 @@ class CounterScreen(Screen):
 
         self.shortcut_keys = {}
         for key, handler in (("F2", self.pick_customer), ("F3", self.hold_bill), ("F4", self.show_held),
-                             ("F5", self.apply_discount), ("F6", self.delete_selected_line),
+                             ("F5", self.apply_discount), ("F6", self.delete_selected_line), ("F7", self.change_batch),
                              ("F8", self.discard_bill), ("F10", self.print_last), ("Del", self.delete_selected_line), ("F12", self.pay)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(handler)
@@ -113,7 +114,7 @@ class CounterScreen(Screen):
 
     def apply_read_only(self, read_only):
         for widget in (self.entry, self.customer_button, self.discount_button, self.hold_button,
-                       self.held_button, self.discard_button, self.delete_button, self.pay_button):
+                       self.held_button, self.discard_button, self.delete_button, self.batch_button, self.pay_button):
             widget.setEnabled(not read_only)
         for key, shortcut in self.shortcut_keys.items():
             if key != "F10":                              # printing the last bill is read-only safe
@@ -198,6 +199,21 @@ class CounterScreen(Screen):
             line_id = self._selected_line_id()
             if line_id is not None:
                 self.controller.remove_line(line_id)
+        self._guarded(run)
+
+    def change_batch(self):
+        def run():
+            line_id = self._selected_line_id()
+            if line_id is None:
+                return
+            options = self.controller.batch_options(line_id)
+            if options is None:
+                self.status_label.setText(tr("counter.batch_not_tracked"))
+                return
+            current, choices = options
+            chosen = self._ask_batch(choices, current)
+            if chosen is not None and chosen != current:
+                self.controller.set_line_batch(line_id, chosen)
         self._guarded(run)
 
     def hold_bill(self):
@@ -307,6 +323,10 @@ class CounterScreen(Screen):
     def _ask_discount(self, max_paise):
         dialog = dialogs.DiscountDialog(max_paise, self)
         return dialog.discount_paise() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
+    def _ask_batch(self, choices, current_id):
+        dialog = dialogs.BatchDialog(choices, current_id, self)
+        return dialog.selected_batch_id() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def _ask_held(self, rows):
         dialog = dialogs.HeldBillsDialog(rows, self)

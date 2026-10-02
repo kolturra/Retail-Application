@@ -173,3 +173,39 @@ def test_read_only_blocks_adding(shop_conn, ctl):
     guard.set_read_only(True)
     with pytest.raises(guard.ReadOnlyError):
         ctl.submit("8901")
+
+
+def _milk(conn):
+    milk = items.create_item(conn, name="Milk", sell_price_paise=100, tracking="batch", barcodes=["M1"])
+    early = stock.add_unit(conn, milk, batch_no="B", expiry="2026-10-01")
+    late = stock.add_unit(conn, milk, batch_no="A", expiry="2026-12-01")
+    stock.record(conn, milk, 5_000, "purchase", unit_id=early)
+    stock.record(conn, milk, 5_000, "purchase", unit_id=late)
+    return milk, early, late
+
+
+def test_batch_options_and_override(shop_conn, ctl):
+    milk, early, late = _milk(shop_conn)
+    line = ctl.submit("M1").line_id
+    current, choices = ctl.batch_options(line)
+    assert current == early and [c["id"] for c in choices] == [early, late]
+    ctl.set_line_batch(line, late)
+    assert ctl.batch_options(line)[0] == late
+    assert ctl.detail()["lines"][0]["batch_no"] == "A"
+
+
+def test_batch_options_is_none_for_untracked_or_missing_lines(shop_conn, ctl):
+    stocked(shop_conn, name="Soap", barcodes=["8901"])
+    line = ctl.submit("8901").line_id
+    assert ctl.batch_options(line) is None and ctl.batch_options(999) is None
+
+
+def test_batch_override_is_refused_when_read_only(shop_conn, ctl):
+    milk, early, late = _milk(shop_conn)
+    line = ctl.submit("M1").line_id
+    guard.set_read_only(True)
+    try:
+        with pytest.raises(guard.ReadOnlyError):
+            ctl.set_line_batch(line, late)
+    finally:
+        guard.set_read_only(False)

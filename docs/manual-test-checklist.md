@@ -57,6 +57,7 @@ installed app are all untested until this checklist is worked through.
 - [ ] Serial/IMEI sale: the sold unit shows as sold and cannot be sold again.
 - [ ] Warranty months are shown on the bill.
 - [ ] Batch tracking, where an item uses it, picks and shows the right batch.
+- [ ] F7 (Change batch) on a batch-tracked line lists the item's batches with expiry and quantity, the current one preselected; choosing another updates the line, and an expired batch is marked EXPIRED.
 - [ ] Paying with EMI is offered; the printed A4 invoice lists the IMEI and the warranty end date.
 - [ ] A Purchase with several IMEIs (one per line) creates one unit each; a repeated IMEI is refused.
 - [ ] Returning a phone puts that IMEI back in stock; serial items can only be returned whole.

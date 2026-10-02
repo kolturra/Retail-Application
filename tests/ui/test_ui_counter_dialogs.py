@@ -218,3 +218,25 @@ def test_pay_dialog_free_bill_is_valid_with_no_payments(qtbot):
     d = cd.PayDialog(0, has_customer=False, features={})
     qtbot.addWidget(d)
     assert d.is_valid() and d.payments() == []
+
+
+def test_batch_dialog_lists_batches_defaults_to_current_and_marks_expired(shop_conn, qtbot):
+    from retail import i18n
+    choices = [{"id": 5, "batch_no": "OLD", "expiry": "2000-01-31", "on_hand_milli": 2500},
+               {"id": 6, "batch_no": "NEW", "expiry": "2999-12-01", "on_hand_milli": 4000},
+               {"id": 7, "batch_no": "NOEXP", "expiry": None, "on_hand_milli": 1000}]
+    d = cd.BatchDialog(choices, 6)
+    qtbot.addWidget(d)
+    assert d.selected_batch_id() == 6 and d.list.count() == 3
+    assert "OLD" in d.list.item(0).text() and "31-01-2000" in d.list.item(0).text()
+    assert "2.5" in d.list.item(0).text() and i18n.tr("dlg.batch_expired") in d.list.item(0).text()
+    assert i18n.tr("dlg.batch_expired") not in d.list.item(1).text()
+    assert i18n.tr("dlg.batch_no_expiry") in d.list.item(2).text()
+    d.list.setCurrentRow(2)
+    assert d.selected_batch_id() == 7
+
+
+def test_batch_dialog_with_no_choices_cannot_be_accepted(shop_conn, qtbot):
+    d = cd.BatchDialog([], None)
+    qtbot.addWidget(d)
+    assert d.selected_batch_id() is None and not d.ok_button.isEnabled()
