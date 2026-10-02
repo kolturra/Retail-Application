@@ -136,6 +136,8 @@ class CounterScreen(Screen):
 
     def _handle(self, entry):
         kind = entry.kind
+        if kind == "added":  # a non-modal note, so scanning stays fast; the next scan replaces it
+            self.status_label.setText(tr("counter.low_stock_warn", name=entry.item["name"]) if entry.warn else "")
         if kind == "pick":
             item_id = self._ask_pick(entry.items)
             if item_id is not None:

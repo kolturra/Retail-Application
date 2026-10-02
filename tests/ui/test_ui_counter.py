@@ -331,3 +331,39 @@ def test_auto_print_previews_every_completed_sale(screen, monkeypatch):
     screen.pay()
     assert printed == [screen.last_bill_id]
 
+
+
+# --- I3: the oversell policy 'warn' is visible at the counter --------------------------------
+def short_item(conn):
+    item_id = items.create_item(conn, name="Soap", sell_price_paise=1000, barcodes=["8901"])
+    stock.record(conn, item_id, 1000, "opening")                 # exactly one in stock
+    return item_id
+
+
+def test_warn_policy_flags_a_sale_beyond_stock_without_a_modal(screen):
+    from retail.services import shop
+    shop.update_shop(screen.session.conn, oversell_policy="warn")
+    short_item(screen.session.conn)
+    type_and_enter(screen, "8901")
+    assert screen.status_label.text() == ""                      # one of one: fine
+    type_and_enter(screen, "8901")                               # the second unit is not in stock
+    assert i18n.tr("counter.low_stock_warn", name="Soap") == screen.status_label.text() != ""
+    assert screen.errors == [] and screen.model.rowCount() >= 1 and screen.controller.has_lines()
+    screen.controller.remove_line(screen.controller.detail()["lines"][-1]["id"])
+    stocked(screen.session.conn, name="Plenty", barcodes=["77"])
+    type_and_enter(screen, "77")
+    assert screen.status_label.text() == ""                      # the next scan clears it
+
+
+def test_block_policy_refuses_and_allow_policy_is_silent(screen):
+    from retail.services import shop
+    conn = screen.session.conn
+    short_item(conn)
+    shop.update_shop(conn, oversell_policy="allow")
+    type_and_enter(screen, "8901")
+    type_and_enter(screen, "8901")
+    assert screen.status_label.text() == "" and screen.errors == []
+    shop.update_shop(conn, oversell_policy="block")
+    type_and_enter(screen, "8901")
+    assert len(screen.errors) == 1 and isinstance(screen.errors[0], stock.InsufficientStock)
+    assert screen.status_label.text() == ""

@@ -1,7 +1,7 @@
 """What a counter entry means. No Qt here: the screen asks, shows prompts, and calls back in."""
 from dataclasses import dataclass
 
-from retail.services import billing, items
+from retail.services import billing, items, shop, stock
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class Entry:
     qty_milli: int = 1000
     text: str = ""
     explicit_qty: bool = True
+    warn: bool = False        # the shop warns on short stock and this item is now over what is on hand
 
 
 class CounterController:
@@ -50,7 +51,17 @@ class CounterController:
             return Entry("weight", item=item)
         bill_id = self._ensure_bill()
         line_id = billing.add_line(self.conn, bill_id, item["id"], qty_milli, serial=serial)
-        return Entry("added", line_id=line_id, item=item, qty_milli=qty_milli)
+        return Entry("added", line_id=line_id, item=item, qty_milli=qty_milli, warn=self._short_stock(bill_id, item))
+
+    def _short_stock(self, bill_id, item):
+        """True when the shop's policy is 'warn' and the bill now holds more of this item than is in stock.
+        ('block' is refused by the engine before this point and 'allow' never warns.)"""
+        policy = shop.get_shop(self.conn)["oversell_policy"]
+        if policy != "warn":
+            return False
+        on_bill = self.conn.execute("SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND item_id = ?",
+                                    (bill_id, item["id"])).fetchone()[0]
+        return stock.check_available(self.conn, item["id"], on_bill, policy) == "warn"
 
     def _ensure_bill(self):
         if self.bill_id is None:
