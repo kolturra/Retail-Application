@@ -111,11 +111,13 @@ def stock_register(conn):
 
 
 def party_ledger(conn):
-    """Statement for every party: opening balance, credit (udhaar) sales/returns and payments received,
-    with a running balance (positive = party owes the shop). The last balance of each party equals
-    parties.balance. Read-only."""
+    """Statement for every customer (type customer/both, like parties.list_dues): opening balance, credit
+    (udhaar) sales/returns and payments received, with a running balance (positive = owes the shop). The
+    last balance of each party equals parties.balance. Suppliers are excluded on purpose: the engine does
+    not track payables, so a supplier statement would look settled when it is not. Read-only."""
     out = []
-    for p in conn.execute("SELECT * FROM party ORDER BY name, id").fetchall():
+    for p in conn.execute(
+            "SELECT * FROM party WHERE type IN ('customer', 'both') ORDER BY name, id").fetchall():
         entries = []
         for r in conn.execute(
                 """SELECT b.bill_no AS bill_no, b.kind AS kind, b.finalized_at AS at, b.id AS bid,

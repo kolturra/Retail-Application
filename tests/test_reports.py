@@ -198,3 +198,15 @@ def test_stock_and_ledger_reports_work_when_expired(shop_conn):
     seed(shop_conn)
     guard.set_read_only(True)
     assert reports.stock_register(shop_conn) and reports.party_ledger(shop_conn)
+
+
+def test_party_ledger_lists_customers_and_both_but_not_suppliers(shop_conn):
+    from retail.services import purchases
+    supplier = parties.create_party(shop_conn, name="Mill Co", type="supplier")
+    both = parties.create_party(shop_conn, name="Both Co", type="both", opening_balance_paise=100)
+    parties.create_party(shop_conn, name="Cust", type="customer")
+    tea = items.create_item(shop_conn, name="Tea", sell_price_paise=500)
+    purchases.create_purchase(shop_conn, party_id=supplier, invoice_no="P1",
+                              lines=[purchases.PurchaseLine(tea, 10_000, 350)])
+    names = [r["party"] for r in reports.party_ledger(shop_conn)]
+    assert names == ["Both Co", "Cust"]

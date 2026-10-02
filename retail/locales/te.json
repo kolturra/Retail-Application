@@ -289,5 +289,7 @@
   "dlg.batch_row": "బ్యాచ్ {batch_no}  |  గడువు {expiry}  |  స్టాక్‌లో {qty}",
   "dlg.batch_no_expiry": "లేదు",
   "dlg.batch_expired": "గడువు ముగిసింది",
-  "counter.whatsapp_last": "చివరి బిల్లును వాట్సాప్ చేయండి"
+  "counter.whatsapp_last": "చివరి బిల్లును వాట్సాప్ చేయండి",
+  "rep.export_customer_ledgers": "కస్టమర్ ఖాతా పుస్తకాలు ఎగుమతి చేయండి (CSV)",
+  "counter.batch_expired_confirm": "ఈ బ్యాచ్ గడువు ముగిసింది. అయినా దీన్ని ఉపయోగించాలా?"
 }

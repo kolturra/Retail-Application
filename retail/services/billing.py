@@ -534,7 +534,9 @@ def set_line_batch(conn, bill_id, line_id, unit_id):
     if type(unit_id) is not int:
         raise BillingError("Batch must be a whole number id")
     with transaction(conn):
-        _bill(conn, bill_id, status="held")
+        bill = _bill(conn, bill_id, status="held")
+        if bill["kind"] != "sale":
+            raise BillingError("Only sale bills have batches to change")
         line = conn.execute(
             """SELECT l.*, i.tracking FROM bill_line l JOIN item i ON i.id = l.item_id
                WHERE l.id = ? AND l.bill_id = ?""", (line_id, bill_id)).fetchone()

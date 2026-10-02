@@ -158,7 +158,7 @@ def test_export_party_ledgers_csv(screen, tmp_path):
     parties.create_party(screen.session.conn, name="@cmd", opening_balance_paise=700)
     screen._ask_save_path = lambda name: str(tmp_path / name)
     screen.export_ledger()
-    rows = _read(tmp_path / "party_ledgers.csv")
+    rows = _read(tmp_path / "customer_ledgers.csv")
     assert [r["party"] for r in rows] == ["'@cmd"]
     assert rows[0]["entry"] == "opening" and rows[0]["balance"] == "7.00"
 
@@ -180,4 +180,4 @@ def test_new_exports_enabled_read_only_cancel_and_unwritable(screen, tmp_path):
     i18n.set_language("hi")
     screen.retranslate()
     assert screen.export_stock_button.text() == i18n.tr("rep.export_stock") != en[0]
-    assert screen.export_ledger_button.text() == i18n.tr("rep.export_ledger") != en[1]
+    assert screen.export_ledger_button.text() == i18n.tr("rep.export_customer_ledgers") != en[1]

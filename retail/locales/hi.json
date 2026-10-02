@@ -289,5 +289,7 @@
   "dlg.batch_row": "बैच {batch_no}  |  समाप्ति {expiry}  |  स्टॉक में {qty}",
   "dlg.batch_no_expiry": "कोई नहीं",
   "dlg.batch_expired": "समाप्त",
-  "counter.whatsapp_last": "पिछला बिल व्हाट्सऐप करें"
+  "counter.whatsapp_last": "पिछला बिल व्हाट्सऐप करें",
+  "rep.export_customer_ledgers": "ग्राहक खाता-बही निर्यात करें (CSV)",
+  "counter.batch_expired_confirm": "इस बैच की समय-सीमा समाप्त हो चुकी है। फिर भी इसका उपयोग करें?"
 }

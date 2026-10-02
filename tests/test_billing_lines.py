@@ -396,3 +396,12 @@ def test_batch_choices_lists_stocked_batches_in_expiry_order(shop_conn):
     assert [(c["id"], c["batch_no"], c["expiry"], c["on_hand_milli"]) for c in stock.batch_choices(shop_conn, milk)] == [
         (early, "B", "2026-10-01", 2000), (late, "A", "2026-12-01", 5000)]
     assert [c["id"] for c in stock.batch_choices(shop_conn, milk, include_unit_id=empty)][0] == empty
+
+
+def test_set_line_batch_requires_a_sale_bill(shop_conn):
+    milk, early, late = _batch_item(shop_conn)
+    bill_id = billing.start_bill(shop_conn)
+    line = billing.add_line(shop_conn, bill_id, milk, 1000)
+    shop_conn.execute("UPDATE bill SET kind = 'sale_return' WHERE id = ?", (bill_id,))
+    with pytest.raises(BillingError):
+        billing.set_line_batch(shop_conn, bill_id, line, late)

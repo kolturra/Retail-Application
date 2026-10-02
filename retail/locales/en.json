@@ -289,5 +289,7 @@
   "dlg.batch_row": "Batch {batch_no}  |  Expiry {expiry}  |  In stock {qty}",
   "dlg.batch_no_expiry": "none",
   "dlg.batch_expired": "EXPIRED",
-  "counter.whatsapp_last": "WhatsApp last bill"
+  "counter.whatsapp_last": "WhatsApp last bill",
+  "rep.export_customer_ledgers": "Export customer ledgers (CSV)",
+  "counter.batch_expired_confirm": "This batch has expired. Use it anyway?"
 }

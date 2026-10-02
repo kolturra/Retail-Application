@@ -3,7 +3,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
                                QPushButton, QTableView, QVBoxLayout)
 
-from retail import segments
+from retail import clock, segments
 from retail.i18n import tr
 from retail.services import billing, items
 from retail_ui import fmt, print_ui
@@ -216,8 +216,14 @@ class CounterScreen(Screen):
                 return
             current, choices = options
             chosen = self._ask_batch(choices, current)
-            if chosen is not None and chosen != current:
-                self.controller.set_line_batch(line_id, chosen)
+            if chosen is None or chosen == current:
+                return
+            picked = next((c for c in choices if c["id"] == chosen), None)
+            if picked and picked["expiry"] and picked["expiry"] < clock.today().isoformat()                     and not self._confirm_expired_batch():
+                return                                          # keep the old batch
+            line = next(l for l in self.controller.detail()["lines"] if l["id"] == line_id)
+            short = self.controller.set_line_batch(line_id, chosen)
+            self.status_label.setText(tr("counter.low_stock_warn", name=line["item_name"]) if short else "")
         self._guarded(run)
 
     def hold_bill(self):
@@ -286,6 +292,8 @@ class CounterScreen(Screen):
         rows, ids = [], []
         for line in detail["lines"]:
             name = line["item_name"] + (f"  [{line['serial']}]" if line["serial"] else "")
+            if line["tracking"] == "batch" and line["batch_no"]:
+                name += f"  [{line['batch_no']}]"
             qty = fmt.qty(line["qty_milli"]) + (f" {line['unit']}" if line["tracking"] == "weighed" else "")
             rows.append((name, qty, fmt.rupees(line["rate_paise"]),
                          fmt.rupees(line["discount_paise"]) if line["discount_paise"] else "",
@@ -353,6 +361,9 @@ class CounterScreen(Screen):
         features = segments.template_settings(self.session.conn).get("features", {})
         dialog = dialogs.PayDialog(total_paise, party_id is not None, features, self)
         return dialog.payments() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
+    def _confirm_expired_batch(self):
+        return helpers.confirm(self, "counter.batch_expired_confirm")
 
     def _confirm(self, key):
         return helpers.confirm(self, key)

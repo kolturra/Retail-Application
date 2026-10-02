@@ -87,7 +87,14 @@ class CounterController:
         return line["unit_id"], stock.batch_choices(self.conn, line["item_id"], include_unit_id=line["unit_id"])
 
     def set_line_batch(self, line_id, unit_id):
+        """Apply the override. Returns True when the shop warns on short stock and the chosen batch now
+        holds less than the bill takes from it (same non-modal note as an add)."""
         billing.set_line_batch(self.conn, self.bill_id, line_id, unit_id)
+        if shop.get_shop(self.conn)["oversell_policy"] != "warn":
+            return False
+        on_bill = self.conn.execute("SELECT COALESCE(SUM(qty_milli), 0) FROM bill_line WHERE bill_id = ? AND unit_id = ?",
+                                    (self.bill_id, unit_id)).fetchone()[0]
+        return stock.unit_on_hand(self.conn, unit_id) < on_bill
 
     def set_customer(self, party_id):
         billing.set_party(self.conn, self._ensure_bill(), party_id)

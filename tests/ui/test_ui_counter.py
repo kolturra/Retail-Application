@@ -435,6 +435,8 @@ def _sell_with_customer(screen, phone="98765 43210"):
     item = items.create_item(conn, name="Soap", sell_price_paise=11800, buy_price_paise=7777, gst_rate_bp=1800,
                              barcodes=["8901"])
     stock.record(conn, item, 50_000, "opening")
+    from retail.services import shop
+    shop.update_shop(conn, gstin="36AAAAA1234A1Z5")
     ravi = parties.create_party(conn, name="Ravi Kumar", phone=phone)
     type_and_enter(screen, "8901")
     screen._ask_customer = lambda: ("set", ravi)
@@ -461,7 +463,8 @@ def test_whatsapp_last_shares_customer_and_bill_details_only_and_never_automatic
     import urllib.parse
     text = urllib.parse.unquote(opened[0])
     assert "Ravi Kumar" in text and "S000001" in text and "Soap" in text and "118.00" in text
-    assert "7777" not in text and "77.77" not in text and "GSTIN" not in text   # no purchase price, no shop GSTIN
+    assert "36AAAAA1234A1Z5" not in opened[0] and "36AAAAA1234A1Z5" not in text   # shop GSTIN value
+    assert "7777" not in text and "77.77" not in text and "GSTIN" not in text   # no purchase price
 
 
 def test_whatsapp_last_asks_for_a_phone_when_the_customer_has_none(screen, monkeypatch):
@@ -503,3 +506,45 @@ def test_whatsapp_button_disables_again_after_a_restore(make_session, qtbot):
     assert sc.whatsapp_button.isEnabled()
     sc._on_restored()
     assert not sc.whatsapp_button.isEnabled()
+
+
+def test_expired_batch_needs_confirmation_and_cancel_keeps_the_old_batch(screen):
+    milk, early, late = _milk(screen.session.conn)
+    type_and_enter(screen, "M1")                                      # auto-picks the early batch
+    screen.session.conn.execute("UPDATE stock_unit SET expiry = '2000-01-01' WHERE id = ?", (late,))
+    screen._ask_batch = lambda choices, current: late
+    asked = []
+    screen._confirm_expired_batch = lambda: asked.append(1) or False
+    screen.change_batch()
+    assert asked == [1] and screen.controller.detail()["lines"][0]["unit_id"] == early
+    screen._confirm_expired_batch = lambda: asked.append(2) or True
+    screen.change_batch()
+    assert asked == [1, 2] and screen.controller.detail()["lines"][0]["unit_id"] == late
+    screen.session.conn.execute("UPDATE stock_unit SET expiry = '2999-01-01' WHERE id = ?", (early,))
+    screen._ask_batch = lambda choices, current: early                 # an unexpired batch asks nothing
+    screen._confirm_expired_batch = lambda: pytest.fail("no confirmation for a valid batch")
+    screen.change_batch()
+    assert screen.controller.detail()["lines"][0]["unit_id"] == early
+
+
+def test_change_batch_shows_the_low_stock_note_under_warn_policy(screen):
+    from retail.services import shop
+    conn = screen.session.conn
+    milk, early, late = _milk(conn)
+    conn.execute("UPDATE stock_unit SET expiry = '2999-01-01' WHERE id IN (?, ?)", (early, late))  # none expired
+    screen._confirm_expired_batch = lambda: pytest.fail("no expired batch here")
+    stock.record(conn, milk, -4_000, "adjustment", unit_id=late)       # late holds 1
+    shop.update_shop(conn, oversell_policy="warn")
+    type_and_enter(screen, "3*M1")
+    screen._ask_batch = lambda choices, current: late
+    screen.change_batch()
+    assert screen.status_label.text() == i18n.tr("counter.low_stock_warn", name="Milk") and screen.errors == []
+    screen._ask_batch = lambda choices, current: early
+    screen.change_batch()
+    assert screen.status_label.text() == ""
+
+
+def test_batch_number_is_shown_on_batch_tracked_rows(screen):
+    _milk(screen.session.conn)
+    type_and_enter(screen, "M1")
+    assert screen.model.data(screen.model.index(0, 0)) == "Milk  [B]"

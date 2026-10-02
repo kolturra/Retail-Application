@@ -209,3 +209,15 @@ def test_batch_override_is_refused_when_read_only(shop_conn, ctl):
             ctl.set_line_batch(line, late)
     finally:
         guard.set_read_only(False)
+
+
+def test_set_line_batch_reports_short_stock_only_under_the_warn_policy(shop_conn, ctl):
+    from retail.services import shop
+    milk, early, late = _milk(shop_conn)
+    stock.record(shop_conn, milk, -4_000, "adjustment", unit_id=late)   # late holds 1
+    line = ctl.submit("3*M1").line_id                                    # 3 from the early batch (5)
+    shop.update_shop(shop_conn, oversell_policy="warn")
+    assert ctl.set_line_batch(line, late) is True
+    assert ctl.set_line_batch(line, early) is False
+    shop.update_shop(shop_conn, oversell_policy="allow")
+    assert ctl.set_line_batch(line, late) is False

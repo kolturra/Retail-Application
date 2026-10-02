@@ -49,7 +49,7 @@ class ReportsScreen(Screen):
         self.export_sales_button.clicked.connect(lambda _=False: self.export_sales())
         self.export_gst_button.clicked.connect(lambda _=False: self.export_gst())
         self.export_stock_button = self.bind(QPushButton(), "rep.export_stock")
-        self.export_ledger_button = self.bind(QPushButton(), "rep.export_ledger")
+        self.export_ledger_button = self.bind(QPushButton(), "rep.export_customer_ledgers")
         self.export_stock_button.clicked.connect(lambda _=False: self.export_stock())
         self.export_ledger_button.clicked.connect(lambda _=False: self.export_ledger())
         for button in (self.export_sales_button, self.export_gst_button, self.export_stock_button,
@@ -149,8 +149,8 @@ class ReportsScreen(Screen):
                      reports.STOCK_COLUMNS)
 
     def export_ledger(self):
-        """All party ledgers (not date-ranged: a running balance needs the full history)."""
-        self._export("party_ledgers.csv", lambda s, e: reports.party_ledger(self.session.conn),
+        """All customer ledgers (not date-ranged: a running balance needs the full history)."""
+        self._export("customer_ledgers.csv", lambda s, e: reports.party_ledger(self.session.conn),
                      reports.LEDGER_COLUMNS)
 
     # --- prompts ----------------------------------------------------------------------
