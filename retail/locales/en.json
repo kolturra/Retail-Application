@@ -189,5 +189,16 @@
   "pur.cost": "Cost per unit",
   "pur.serials": "Serials / IMEIs (one per line)",
   "pur.batch": "Batch no.",
-  "pur.expiry": "Expiry (YYYY-MM-DD)"
+  "pur.expiry": "Expiry (YYYY-MM-DD)",
+  "party.customers": "Customers",
+  "party.suppliers": "Suppliers",
+  "party.dues": "Only dues (udhaar)",
+  "party.balance": "Balance due",
+  "party.type": "Type",
+  "party.type_customer": "Customer",
+  "party.type_supplier": "Supplier",
+  "party.type_both": "Both",
+  "party.none_state": "— not set —",
+  "party.receive": "Receive payment",
+  "party.dialog_title": "Customer / supplier"
 }

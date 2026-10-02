@@ -189,5 +189,16 @@
   "pur.cost": "యూనిట్ ధర",
   "pur.serials": "సీరియల్ / IMEI (ప్రతి లైన్‌కు ఒకటి)",
   "pur.batch": "బ్యాచ్ నం.",
-  "pur.expiry": "ఎక్స్‌పైరీ (YYYY-MM-DD)"
+  "pur.expiry": "ఎక్స్‌పైరీ (YYYY-MM-DD)",
+  "party.customers": "కస్టమర్లు",
+  "party.suppliers": "సప్లయర్లు",
+  "party.dues": "బాకీలు మాత్రమే (అప్పు)",
+  "party.balance": "బాకీ మొత్తం",
+  "party.type": "రకం",
+  "party.type_customer": "కస్టమర్",
+  "party.type_supplier": "సప్లయర్",
+  "party.type_both": "రెండూ",
+  "party.none_state": "— సెట్ చేయలేదు —",
+  "party.receive": "చెల్లింపు స్వీకరించు",
+  "party.dialog_title": "కస్టమర్ / సప్లయర్"
 }

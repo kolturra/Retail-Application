@@ -189,5 +189,16 @@
   "pur.cost": "प्रति इकाई लागत",
   "pur.serials": "सीरियल / IMEI (हर लाइन में एक)",
   "pur.batch": "बैच नं.",
-  "pur.expiry": "एक्सपायरी (YYYY-MM-DD)"
+  "pur.expiry": "एक्सपायरी (YYYY-MM-DD)",
+  "party.customers": "ग्राहक",
+  "party.suppliers": "सप्लायर",
+  "party.dues": "सिर्फ बकाया (उधार)",
+  "party.balance": "बकाया रकम",
+  "party.type": "प्रकार",
+  "party.type_customer": "ग्राहक",
+  "party.type_supplier": "सप्लायर",
+  "party.type_both": "दोनों",
+  "party.none_state": "— तय नहीं —",
+  "party.receive": "भुगतान लें",
+  "party.dialog_title": "ग्राहक / सप्लायर"
 }
