@@ -33,6 +33,7 @@ installed app are all untested until this checklist is worked through.
 - [ ] Cancelling the wizard exits without creating a shop; finishing opens the Counter.
 - [ ] Recovery mode: with an expired licence and no shop, only the Backup & Licence screen opens, with a notice.
 - [ ] In recovery mode, restoring a backup shows the restart notice and the app works after restarting.
+- [ ] Recover on a new PC from the second-location copy: install, activate, then Backup & Licence > Restore from file and pick the copy from the USB/synced folder; the shop data is back.
 
 ## 4. Grocery (kirana / general store)
 - [ ] Scanning a barcode adds one line and the input is ready for the next scan with no mouse click.

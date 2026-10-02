@@ -42,6 +42,9 @@ class DataScreen(Screen):
 
         backup_box = self._group("data.backups", layout)
         bl = QVBoxLayout(backup_box)
+        self.folder_label = QLabel()          # which folder is really in use (a fallback is called out)
+        self.folder_label.setWordWrap(True)
+        bl.addWidget(self.folder_label)
         self.backups_list = QListWidget()
         bl.addWidget(self.backups_list)
         row = QHBoxLayout()
@@ -49,6 +52,9 @@ class DataScreen(Screen):
         self.restore_button = self.bind(QPushButton(), "data.restore")
         row.addWidget(self.backup_now_button)
         row.addWidget(self.restore_button)
+        self.restore_file_button = self.bind(QPushButton(), "data.restore_file")
+        row.addWidget(self.restore_file_button)
+        self.restore_file_button.clicked.connect(lambda _=False: self.restore_from_file())
         bl.addLayout(row)
         self.backup_now_button.clicked.connect(lambda _=False: self.backup_now())
         self.restore_button.clicked.connect(lambda _=False: self.restore_selected())
@@ -118,14 +124,16 @@ class DataScreen(Screen):
         """Everything except the folder edits (so a failed save never overwrites what was typed)."""
         s = self.session
         self.backups_list.clear()
-        for path in backup.list_backups(s.backup_dir):
+        self.folder_label.setText(tr("data.folder_fallback", path=s.backup_dir) if s.backup_dir_fallback
+                                  else tr("data.folder_in_use", path=s.backup_dir))
+        for path, where in self._all_backups():
             try:
                 st = path.stat()
                 when = fmt.date_text(datetime.fromtimestamp(st.st_mtime).isoformat(timespec="minutes"))
                 detail = f"{when}, {st.st_size // 1024} KB"
             except OSError:
                 detail = "?"
-            item = QListWidgetItem(f"{path.name}    ({detail})")
+            item = QListWidgetItem(f"{path.name}    ({detail}, {where})")
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             self.backups_list.addItem(item)
         lic = s.license  # never touches shop fields: the database may have no shop (recovery mode)
@@ -135,6 +143,27 @@ class DataScreen(Screen):
         self.state_label.setText(tr("data.status_active") if lic.status == "active" else tr("data.status_expired"))
         self.machine_label.setText(f"{tr('act.machine_id')}: {s.machine_id}")
         self.about_label.setText(f"{APP_NAME}  v{__version__}    {tr('data.contact', phone=vendor.VENDOR_PHONE)}")
+
+    def _all_backups(self):
+        """Backups from the main folder and the second location, newest first, each file once."""
+        s = self.session
+        found, seen = [], set()
+        for folder, label in ((s.backup_dir, tr("data.loc_primary")),
+                              (Path(s.settings.extra_backup_dir) if s.settings.extra_backup_dir else None,
+                               tr("data.loc_extra"))):
+            if folder is None:
+                continue
+            for path in backup.list_backups(folder):
+                try:
+                    key = path.resolve()
+                    mtime = path.stat().st_mtime_ns
+                except OSError:
+                    continue
+                if key not in seen:
+                    seen.add(key)
+                    found.append((mtime, path, label))
+        found.sort(key=lambda f: (f[0], f[1].name), reverse=True)
+        return [(path, label) for _, path, label in found]
 
     def apply_read_only(self, read_only):
         """Nothing here is blocked: backups, restores, folders and activation must always work."""
@@ -179,14 +208,24 @@ class DataScreen(Screen):
         self._guarded(run)
 
     def restore_selected(self):
+        item = self.backups_list.currentItem()
+        if item is not None:
+            self._restore(item.data(Qt.ItemDataRole.UserRole))
+
+    def restore_from_file(self):
+        """Restore a backup from anywhere (the second location on a new PC, a USB stick, an e-mailed copy)."""
+        path = self._pick_backup_file()
+        if path:
+            self._restore(path)
+
+    def _restore(self, path):
         restart = []
 
         def run():
-            item = self.backups_list.currentItem()
-            if item is None or not self._confirm("data.restore_confirm"):
+            if not self._confirm("data.restore_confirm"):
                 return
             had_shop = self.session.has_shop()
-            self.session.restore_from(item.data(Qt.ItemDataRole.UserRole))
+            self.session.restore_from(path)
             self.status_label.setText(tr("data.restored"))
             if not had_shop and self.session.has_shop():
                 restart.append(True)  # recovery mode: the app was started without a shop
@@ -210,6 +249,10 @@ class DataScreen(Screen):
 
     def _confirm(self, key):
         return helpers.confirm(self, key)
+
+    def _pick_backup_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, tr("data.pick_file"), str(self.session.backup_dir), "*.db")
+        return path
 
     def _pick_folder(self, start):
         return QFileDialog.getExistingDirectory(self, tr("common.browse"), start)

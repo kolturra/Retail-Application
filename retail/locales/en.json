@@ -272,5 +272,11 @@
   "data.restart_notice": "Backup restored. Please restart the app to continue.",
   "data.key_expired": "That key is valid but has expired. The app stays read-only until you enter a new key.",
   "app.recovery_notice": "Recovery mode: the licence has expired and this computer has no shop set up. Restore a backup or enter a new licence key below, then restart the app.",
-  "counter.low_stock_warn": "Low stock: {name} is more than what is on hand."
+  "counter.low_stock_warn": "Low stock: {name} is more than what is on hand.",
+  "data.restore_file": "Restore from file…",
+  "data.pick_file": "Choose a backup file",
+  "data.loc_primary": "main folder",
+  "data.loc_extra": "second location",
+  "data.folder_fallback": "The folder you chose is not available, so backups are going to: {path}",
+  "data.folder_in_use": "Backups are saved in: {path}"
 }

@@ -1,4 +1,6 @@
 import logging
+import sqlite3
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -9,6 +11,30 @@ from retail.services import backup, shop
 from retail_ui import settings as ui_settings
 
 log = logging.getLogger("retail_ui")
+
+
+def usable_folder(folder) -> bool:
+    """Can backups really be written there? (A removed USB drive or a typo'd folder cannot.)"""
+    try:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=folder):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def backup_has_shop(path) -> bool:
+    """Does this backup file contain a shop row? (validate_backup only checks the table exists.)"""
+    try:
+        probe = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            return probe.execute("SELECT 1 FROM shop WHERE id = 1").fetchone() is not None
+        finally:
+            probe.close()
+    except sqlite3.DatabaseError:
+        return False
 
 
 class AppSession(QObject):
@@ -35,7 +61,17 @@ class AppSession(QObject):
 
     @property
     def backup_dir(self) -> Path:
-        return Path(self.settings.backup_dir) if self.settings.backup_dir else self.paths.backup_dir
+        """The configured folder, or the default one when the configured folder is unusable (removed drive)."""
+        configured = self.settings.backup_dir
+        if configured and usable_folder(configured):
+            return Path(configured)
+        if configured:
+            log.warning("backup folder %s is not usable; using %s", configured, self.paths.backup_dir)
+        return self.paths.backup_dir
+
+    @property
+    def backup_dir_fallback(self) -> bool:
+        return bool(self.settings.backup_dir) and not usable_folder(self.settings.backup_dir)
 
     def has_shop(self) -> bool:
         return self.conn.execute("SELECT 1 FROM shop WHERE id = 1").fetchone() is not None
@@ -92,6 +128,9 @@ class AppSession(QObject):
     def restore_from(self, path):
         """Replace the live database with a backup. The connection is closed for the swap and always
         reopened, so after a failed restore the app keeps running on the old data."""
+        if self.has_shop() and not backup_has_shop(path):
+            # normal mode must never end up on a database without a shop (every screen would fail)
+            raise backup.BackupError("This backup has no shop set up, so it cannot replace your data")
         self.conn.close()
         original = None
         result = None

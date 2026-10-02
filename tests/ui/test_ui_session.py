@@ -155,3 +155,22 @@ def test_language_can_still_be_switched_after_the_licence_expires(make_session, 
     assert s.shop()["language"] == "en"                      # not saved: the database is read-only
     with pytest.raises(ValueError):
         s.set_language("fr")
+
+
+def test_restore_of_a_backup_without_a_shop_is_refused_before_anything_changes(make_session, tmp_path):
+    import shutil
+    import sqlite3
+    from retail.services import backup
+    s = make_session()
+    shopless = tmp_path / "shopless.db"
+    shutil.copy2(s.backup_now().path, shopless)
+    raw = sqlite3.connect(shopless)
+    for (name,) in raw.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='shop'").fetchall():
+        raw.execute(f"DROP TRIGGER {name}")
+    raw.execute("DELETE FROM shop")
+    raw.commit()
+    raw.close()
+    conn = s.conn
+    with pytest.raises(backup.BackupError):
+        s.restore_from(shopless)
+    assert s.conn is conn and s.has_shop()           # the live connection was never even closed

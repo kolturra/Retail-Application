@@ -3,7 +3,7 @@ import logging
 from retail import clock, db, i18n
 from retail import license as lic
 from retail_ui import settings as ui_settings
-from retail_ui.session import AppSession
+from retail_ui.session import AppSession, usable_folder
 
 log = logging.getLogger("retail_ui")
 
@@ -17,6 +17,10 @@ def bootstrap(paths, *, public_key, machine_id, request_activation, run_onboardi
     paths.ensure()
     settings = ui_settings.load(paths.settings_path)
     backup_dir = settings.backup_dir or paths.backup_dir
+    if settings.backup_dir and not usable_folder(settings.backup_dir):
+        # e.g. a USB drive that is gone: a pending migration's safety backup must not lock the owner out
+        log.warning("configured backup folder %s is not usable; using %s", settings.backup_dir, paths.backup_dir)
+        backup_dir = paths.backup_dir
     conn = db.open_shop(paths.db_path, backup_dir)
     try:
         state = lic.apply_license(paths.license_path, public_key, machine_id, today)

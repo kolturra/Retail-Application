@@ -130,3 +130,37 @@ def test_language_from_the_shop_is_applied(paths, keypair, machine_id):
         assert i18n.get_language() == "te"
     finally:
         session.close()
+
+
+# --- I5: an unavailable custom backup folder must not lock the owner out after an update -------------
+def test_pending_migration_with_an_unusable_backup_folder_uses_the_fallback(paths, keypair, machine_id,
+                                                                            tmp_path, monkeypatch):
+    import shutil
+    from retail import db
+    from retail_ui import settings as ui_settings
+
+    first = boot(paths, keypair, machine_id, request_activation=lambda m, i: valid_key(keypair, machine_id))
+    first.close()                                    # an existing shop database
+    blocker = tmp_path / "gone-usb"
+    blocker.write_text("not a folder")               # E:\Backups no longer exists / cannot be created
+    ui_settings.save(paths.settings_path, ui_settings.UiSettings(backup_dir=str(blocker / "Backups")))
+    migrations = tmp_path / "migrations"
+    migrations.mkdir()
+    for f in db.MIGRATIONS_DIR.glob("*.sql"):
+        shutil.copy2(f, migrations / f.name)
+    (migrations / "9999_extra.sql").write_text("CREATE TABLE extra_for_test (x INTEGER);", encoding="utf-8")
+    real_open = db.open_shop
+    used = []
+
+    def open_shop(db_path, backup_dir, **kw):
+        used.append(backup_dir)
+        return real_open(db_path, backup_dir, migrations_dir=migrations)
+    monkeypatch.setattr(db, "open_shop", open_shop)
+
+    session = boot(paths, keypair, machine_id, request_activation=lambda m, i: pytest.fail("licence is saved"))
+    try:
+        assert used == [paths.backup_dir] and list(paths.backup_dir.glob("pre-migrate-*.db"))
+        assert session.backup_dir == paths.backup_dir and session.backup_dir_fallback
+        assert session.conn.execute("SELECT COUNT(*) FROM extra_for_test").fetchone()[0] == 0   # migrated
+    finally:
+        session.close()

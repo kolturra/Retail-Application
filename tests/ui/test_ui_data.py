@@ -277,3 +277,121 @@ def test_backup_now_works_in_recovery_mode(make_session, qtbot):
     sc = _recovery_screen(make_session, qtbot)
     sc.backup_now()
     assert sc.errors == [] and sc.backups_list.count() == 1
+
+
+# --- I4: both backup locations and restore-from-file --------------------------------------------
+def test_backups_from_both_locations_are_listed_once_and_labelled(screen, tmp_path):
+    screen.session.settings.extra_backup_dir = str(tmp_path / "usb")
+    result = screen.session.backup_now()               # writes to the main folder and the second location
+    only_usb = tmp_path / "usb" / "daily-20200101-000000.db"
+    only_usb.write_bytes(result.path.read_bytes())
+    screen.refresh()
+    rows = [screen.backups_list.item(i).text() for i in range(screen.backups_list.count())]
+    assert len(rows) == 3
+    assert sum(i18n.tr("data.loc_extra") in r for r in rows) == 2
+    assert sum(i18n.tr("data.loc_primary") in r for r in rows) == 1
+    screen.session.settings.extra_backup_dir = str(screen.session.backup_dir)   # same folder twice: no duplicates
+    screen.refresh()
+    assert screen.backups_list.count() == 1
+
+
+def test_restoring_the_second_location_copy_from_the_list(screen, tmp_path):
+    screen.session.settings.extra_backup_dir = str(tmp_path / "usb")
+    screen.session.backup_now()
+    items.create_item(screen.session.conn, name="Later", sell_price_paise=1)
+    for f in screen.session.backup_dir.glob("*.db"):
+        f.unlink()                                      # the main folder is gone; only the USB copy remains
+    screen.refresh()
+    assert screen.backups_list.count() == 1 and i18n.tr("data.loc_extra") in screen.backups_list.item(0).text()
+    screen.backups_list.setCurrentRow(0)
+    screen.restore_selected()
+    assert screen.errors == [] and items.list_items(screen.session.conn) == []
+
+
+def test_restore_from_file_confirms_then_restores(screen, tmp_path):
+    snapshot = screen.session.backup_now().path
+    elsewhere = tmp_path / "mail" / "shop-copy.db"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(snapshot.read_bytes())
+    items.create_item(screen.session.conn, name="Later", sell_price_paise=1)
+    asked = []
+    screen._confirm = lambda key: asked.append(key) or True
+    screen._pick_backup_file = lambda: str(elsewhere)
+    screen.restore_from_file()
+    assert asked == ["data.restore_confirm"] and items.list_items(screen.session.conn) == [] and screen.errors == []
+
+
+def test_restore_from_file_cancelled_or_corrupt(screen, tmp_path):
+    items.create_item(screen.session.conn, name="Keep", sell_price_paise=1)
+    screen._confirm = lambda key: pytest.fail("no file was chosen")
+    screen._pick_backup_file = lambda: ""
+    screen.restore_from_file()
+    bad = tmp_path / "bad.db"
+    bad.write_bytes(b"nope")
+    screen._confirm = lambda key: True
+    screen._pick_backup_file = lambda: str(bad)
+    screen.restore_from_file()
+    assert len(screen.errors) == 1 and [r["name"] for r in items.list_items(screen.session.conn)] == ["Keep"]
+
+
+def test_restore_from_file_works_in_read_only_mode(screen):
+    from retail import guard
+    snapshot = screen.session.backup_now().path
+    screen.session.license = lic.LicenseState("expired", buyer="B", expires="2020-01-01", plan="standard")
+    guard.set_read_only(True)
+    screen.apply_read_only(True)
+    assert screen.restore_file_button.isEnabled() and screen.restore_button.isEnabled()
+    screen._pick_backup_file = lambda: str(snapshot)
+    screen.restore_from_file()
+    assert screen.errors == [] and i18n.tr("data.restored") in screen.status_label.text()
+
+
+def test_recovery_mode_restores_from_a_file_and_asks_for_a_restart(make_session, qtbot):
+    donor = make_session()
+    snapshot = donor.backup_now().path
+    donor.close()
+    donor.paths.db_path.unlink()
+    session = make_session(with_shop=False)
+    sc = DataScreen(session)
+    qtbot.addWidget(sc)
+    sc.errors, restarts = [], []
+    sc._show_error = lambda exc: sc.errors.append(exc)
+    sc._confirm = lambda key: True
+    sc._pick_backup_file = lambda: str(snapshot)
+    sc._notify_restart = lambda: restarts.append(True)
+    assert not session.has_shop()
+    sc.restore_from_file()
+    assert sc.errors == [] and session.has_shop() and restarts == [True]
+
+
+# --- I5: an unusable custom folder never blocks the app --------------------------------------------
+def test_an_unusable_backup_folder_falls_back_to_the_default_and_says_so(screen, tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    screen.session.settings.backup_dir = str(blocker / "E_drive")
+    screen.refresh()
+    assert screen.session.backup_dir == screen.session.paths.backup_dir and screen.session.backup_dir_fallback
+    assert i18n.tr("data.folder_fallback", path=screen.session.paths.backup_dir) == screen.folder_label.text()
+    screen.backup_now()
+    assert screen.errors == [] and list(screen.session.paths.backup_dir.glob("daily-*.db"))
+
+
+# --- M7: a backup without a shop is refused in normal mode -------------------------------------------
+def test_a_backup_with_no_shop_row_is_refused_in_normal_mode(screen, tmp_path):
+    import shutil
+    import sqlite3
+    from retail.services import backup as backup_service
+    snapshot = screen.session.backup_now().path
+    shopless = tmp_path / "shopless.db"
+    shutil.copy2(snapshot, shopless)
+    raw = sqlite3.connect(shopless)
+    for (name,) in raw.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='shop'").fetchall():
+        raw.execute(f"DROP TRIGGER {name}")
+    raw.execute("DELETE FROM shop")
+    raw.commit()
+    raw.close()
+    items.create_item(screen.session.conn, name="Keep", sell_price_paise=1)
+    screen._pick_backup_file = lambda: str(shopless)
+    screen.restore_from_file()
+    assert len(screen.errors) == 1 and isinstance(screen.errors[0], backup_service.BackupError)
+    assert screen.session.has_shop() and [r["name"] for r in items.list_items(screen.session.conn)] == ["Keep"]
