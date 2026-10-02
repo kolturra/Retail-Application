@@ -54,6 +54,18 @@ def _next_number(conn, name, prefix):
     return f"{prefix}{value:06d}"
 
 
+def _supply_state(conn, bill):
+    """Place of supply to freeze on a bill at finalization (same rule _retax splits the tax by);
+    None for an estimate, which carries no tax."""
+    if bill["gst_mode"] != "gst":
+        return None
+    party_state = None
+    if bill["party_id"] is not None:
+        party_state = conn.execute(
+            "SELECT state_code FROM party WHERE id = ?", (bill["party_id"],)).fetchone()["state_code"]
+    return gst.place_of_supply(shop.get_shop(conn)["state_code"], party_state)
+
+
 def _retax(conn, bill_id):
     """Recompute every line's tax and the bill totals from the stored line amounts."""
     bill = _bill(conn, bill_id)
@@ -184,8 +196,9 @@ def add_line(conn, bill_id, item_id, qty_milli=1000, *, serial=None, unit_id=Non
             raise BillingError("Discount is larger than the line amount")
         cur = conn.execute(
             """INSERT INTO bill_line(bill_id, item_id, unit_id, qty_milli, rate_paise, discount_paise,
-                   amount_paise, gst_rate_bp) VALUES (?,?,?,?,?,?,?,?)""",
-            (bill_id, item_id, unit_id, qty_milli, rate, discount_paise, amount, item["gst_rate_bp"]),
+                   amount_paise, gst_rate_bp, hsn) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (bill_id, item_id, unit_id, qty_milli, rate, discount_paise, amount, item["gst_rate_bp"],
+             item["hsn"]),
         )
         _retax(conn, bill_id)
     return cur.lastrowid
@@ -287,8 +300,9 @@ def finalize(conn, bill_id, payments, *, today=None):
         bill_no = _next_number(conn, "sale", "S")
         now = clock.now_iso()
         conn.execute(
-            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
-            (bill_no, now, bill_id),
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ?, place_of_supply_state = ?"
+            " WHERE id = ?",
+            (bill_no, now, _supply_state(conn, bill), bill_id),
         )
         for line in lines:
             stock._record(conn, line["item_id"], -line["qty_milli"], "sale", "bill", bill_id, line["unit_id"])
@@ -392,10 +406,10 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
             conn.execute(
                 """INSERT INTO bill_line(bill_id, item_id, unit_id, ref_line_id, qty_milli, rate_paise,
                        discount_paise, amount_paise, gst_rate_bp, taxable_paise, cgst_paise,
-                       sgst_paise, igst_paise, total_paise) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,?)""",
+                       sgst_paise, igst_paise, total_paise, hsn) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)""",
                 (return_id, ol["item_id"], ol["unit_id"], line_id, qty, ol["rate_paise"],
                  part["amount_paise"], ol["gst_rate_bp"], part["taxable_paise"], part["cgst_paise"],
-                 part["sgst_paise"], part["igst_paise"], part["total_paise"]),
+                 part["sgst_paise"], part["igst_paise"], part["total_paise"], ol["hsn"]),
             )
         # Refund policy (all computed while the return is still held, before the single
         # held -> final update):
@@ -459,8 +473,9 @@ def create_return(conn, original_bill_id, returns, *, refund_mode="cash"):
                 (return_id, refund_mode, total, now),
             )
         conn.execute(
-            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
-            (bill_no, now, return_id),
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ?, place_of_supply_state = ?"
+            " WHERE id = ?",
+            (bill_no, now, orig["place_of_supply_state"], return_id),
         )
         audit.log(conn, "return", "bill", return_id, f"{bill_no} against bill {original_bill_id}")
     return return_id
@@ -472,7 +487,9 @@ def get_bill_detail(conn, bill_id):
     if bill["party_id"] is not None:
         party = conn.execute("SELECT * FROM party WHERE id = ?", (bill["party_id"],)).fetchone()
     lines = conn.execute(
-        """SELECT l.*, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, i.hsn AS hsn,
+        """SELECT l.id, l.bill_id, l.item_id, l.unit_id, l.ref_line_id, l.qty_milli, l.rate_paise,
+                  l.discount_paise, l.amount_paise, l.gst_rate_bp, l.taxable_paise, l.cgst_paise,
+                  l.sgst_paise, l.igst_paise, l.total_paise, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, COALESCE(l.hsn, i.hsn) AS hsn,
                   u.serial AS serial, u.batch_no AS batch_no
            FROM bill_line l JOIN item i ON i.id = l.item_id
            LEFT JOIN stock_unit u ON u.id = l.unit_id

@@ -34,3 +34,9 @@ def split_line(amount_paise, rate_bp, *, inclusive, intra_state):
 
 def is_intra_state(shop_state, party_state):
     return not party_state or party_state == shop_state
+
+
+def place_of_supply(shop_state, party_state):
+    """The state the sale is taxed for: the customer's when known, else the shop's (the same rule
+    is_intra_state uses, so intra-state <=> place of supply == shop state)."""
+    return party_state or shop_state

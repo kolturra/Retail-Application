@@ -145,7 +145,7 @@ def test_open_shop_backs_up_before_upgrading_an_existing_database(tmp_path, db_p
 
 
 def test_latest_version_matches_shipped_migrations():
-    assert db.latest_version() == 1
+    assert db.latest_version() == 2
 
 
 # --- standing-ruling additions ---

@@ -72,14 +72,16 @@ def _a4_html(v):
         extra = " ".join(x for x in (v.customer_phone, f"{tr('tax.gstin')}: {v.customer_gstin}"
                                      if v.customer_gstin else "") if x)
         out.append(f"<p>{e(tr('bill.customer'))}: <b>{e(v.customer_name)}</b> {e(extra)}</p>")
+    hsn_head = f"<th>{e(tr('bill.hsn'))}</th>" if v.show_tax else ""     # an estimate has no HSN
     out.append("<table width='100%' border='1' cellspacing='0' cellpadding='4'><tr>"
-               f"<th>#</th><th align='left'>{e(tr('bill.item'))}</th><th>{e(tr('bill.hsn'))}</th><th>{e(tr('bill.qty'))}</th>"
+               f"<th>#</th><th align='left'>{e(tr('bill.item'))}</th>{hsn_head}<th>{e(tr('bill.qty'))}</th>"
                f"<th>{e(tr('bill.rate'))}</th><th>{e(tr('counter.gst'))}</th><th>{e(tr('bill.total'))}</th></tr>")
     for i, line in enumerate(v.lines, 1):
         name = e(line.name)
         if line.serial:
             name += f"<br>{e(tr('trk.serial'))}: {e(line.serial)}"
-        out.append(f"<tr><td align='right'>{i}</td><td>{name}</td><td>{e(line.hsn)}</td><td align='right'>{e(line.qty)}</td>"
+        hsn_cell = f"<td>{e(line.hsn)}</td>" if v.show_tax else ""
+        out.append(f"<tr><td align='right'>{i}</td><td>{name}</td>{hsn_cell}<td align='right'>{e(line.qty)}</td>"
                    f"<td align='right'>{e(line.rate)}</td><td align='right'>{e(line.gst)}</td>"
                    f"<td align='right'>{e(line.amount)}</td></tr>")
     out.append("</table><br><table align='right' cellspacing='0' cellpadding='3'>")

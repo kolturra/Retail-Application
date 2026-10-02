@@ -201,3 +201,22 @@ def test_new_print_labels_differ_from_english(lang):
     i18n.set_language(lang)
     for key, english in en.items():
         assert i18n.tr(key) != english
+
+
+def test_reprint_shows_the_original_hsn_and_place_after_edits(shop_conn):
+    pune = parties.create_party(shop_conn, name="Pune", gstin="27ABCDE1234F1Z5", state_code="27")
+    bill_id = sale(shop_conn, party_id=pune, hsn="3401")
+    item_id = shop_conn.execute("SELECT id FROM item").fetchone()["id"]
+    items.update_item(shop_conn, item_id, hsn="9999")
+    parties.update_party(shop_conn, pune, name="Pune", state_code="36")
+    v = bill_view.build_bill_view(shop_conn, bill_id)
+    html = render._a4_html(v)
+    assert "3401" in html and "9999" not in html
+    assert v.place_of_supply == "27 - Maharashtra" and v.igst != "" and v.cgst == ""
+
+
+def test_estimate_hides_the_hsn_column(shop_conn):
+    shop.update_shop(shop_conn, gst_enabled=False)
+    v = bill_view.build_bill_view(shop_conn, sale(shop_conn, hsn="3401"))
+    html = render._a4_html(v)
+    assert i18n.tr("bill.hsn") not in html and "3401" not in html

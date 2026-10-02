@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from retail import segments
 from retail.i18n import tr
-from retail.services import billing, shop
+from retail.services import billing, gst, shop
 from retail_ui import fmt, states
 
 LAYOUTS = ("thermal_58", "thermal_80", "a4")
@@ -50,8 +50,10 @@ def _money_or_blank(paise):
     return fmt.rupees(paise) if paise else ""
 
 
-def _place_of_supply(shop_row, party):
-    code = (party["state_code"] if party and party["state_code"] else None) or shop_row["state_code"]
+def _place_of_supply(bill, shop_row, party):
+    # frozen on the bill at sale; bills from before the snapshot fall back to the live state
+    code = bill["place_of_supply_state"] or gst.place_of_supply(
+        shop_row["state_code"], party["state_code"] if party else None)
     name = states.STATES.get(code)
     return f"{code} - {name}" if name else str(code or "")
 
@@ -100,5 +102,5 @@ def build_bill_view(conn, bill_id, *, layout=None) -> BillView:
         total=fmt.rupees(bill["total_paise"]),
         payments=tuple((tr(f"pay.{p['mode']}"), fmt.rupees(p["amount_paise"])) for p in detail["payments"]),
         warranty=tuple((w["serial"], fmt.date_text(w["end_date"])) for w in detail["warranties"]),
-        show_tax=show_tax, place_of_supply=_place_of_supply(s, party) if show_tax else "",
+        show_tax=show_tax, place_of_supply=_place_of_supply(bill, s, party) if show_tax else "",
     )
