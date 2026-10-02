@@ -212,5 +212,22 @@
   "rep.export_sales": "Export sales register (CSV)",
   "rep.export_gst": "Export GST summary (CSV)",
   "rep.exported": "Saved: {path}",
-  "rep.bad_range": "From date is after To date"
+  "rep.bad_range": "From date is after To date",
+  "staff.tab_staff": "Staff",
+  "staff.tab_expenses": "Expenses",
+  "staff.role": "Role",
+  "staff.salary": "Monthly salary",
+  "staff.add": "Add staff",
+  "staff.pay": "Pay salary",
+  "staff.pay_confirm": "Record this month's salary as an expense?",
+  "exp.add": "Add expense",
+  "exp.category": "Category",
+  "exp.cat_salary": "Salary",
+  "exp.cat_rent": "Rent",
+  "exp.cat_electricity": "Electricity",
+  "exp.cat_transport": "Transport",
+  "exp.cat_other": "Other",
+  "exp.staff": "Staff member (optional)",
+  "exp.total": "Total expenses",
+  "exp.no_staff": "(none)"
 }

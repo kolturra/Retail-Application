@@ -212,5 +212,22 @@
   "rep.export_sales": "అమ్మకాల రిజిస్టర్ ఎక్స్‌పోర్ట్ చేయండి (CSV)",
   "rep.export_gst": "GST సారాంశం ఎక్స్‌పోర్ట్ చేయండి (CSV)",
   "rep.exported": "సేవ్ అయింది: {path}",
-  "rep.bad_range": "ప్రారంభ తేదీ ముగింపు తేదీ తర్వాత ఉంది"
+  "rep.bad_range": "ప్రారంభ తేదీ ముగింపు తేదీ తర్వాత ఉంది",
+  "staff.tab_staff": "సిబ్బంది",
+  "staff.tab_expenses": "ఖర్చులు",
+  "staff.role": "పాత్ర",
+  "staff.salary": "నెలవారీ జీతం",
+  "staff.add": "సిబ్బందిని జోడించు",
+  "staff.pay": "జీతం చెల్లించు",
+  "staff.pay_confirm": "ఈ నెల జీతాన్ని ఖర్చుగా నమోదు చేయాలా?",
+  "exp.add": "ఖర్చు జోడించు",
+  "exp.category": "వర్గం",
+  "exp.cat_salary": "జీతం",
+  "exp.cat_rent": "అద్దె",
+  "exp.cat_electricity": "విద్యుత్",
+  "exp.cat_transport": "రవాణా",
+  "exp.cat_other": "ఇతరాలు",
+  "exp.staff": "సిబ్బంది (ఐచ్ఛికం)",
+  "exp.total": "మొత్తం ఖర్చులు",
+  "exp.no_staff": "(ఎవరూ లేరు)"
 }
