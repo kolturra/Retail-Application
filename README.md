@@ -4,3 +4,17 @@ Multi-segment retail desktop app (grocery, electronics). See `docs/superpowers/s
 
 Setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -e ".[dev]"`.
 Tests: `.venv/Scripts/python -m pytest`.
+
+## Building the installer (Windows)
+
+1. `python -m venv .venv` then `.venv\Scripts\python -m pip install -e ".[dev]"`
+2. Install Inno Setup (https://jrsoftware.org/isinfo.php) and make sure `iscc` is on the PATH.
+3. `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`
+   — runs the tests, builds `dist\RetailApp\RetailApp.exe`, runs its `--selftest`, then writes
+   `dist\installer\RetailApp-Setup-0.1.0.exe` (the version in the file name is `retail.__version__`).
+
+The installer keeps the shop's data in `%LOCALAPPDATA%\RetailApp`; upgrading never touches it.
+Nothing from `keys/`, `tools/`, `tests/`, `docs/` or `.superpowers/` is packaged.
+Licence keys are issued with `python -m tools.license_issuer` on the vendor's machine (never shipped).
+The installer is not code-signed, so Windows SmartScreen will warn on first run until a signing
+certificate is added.
