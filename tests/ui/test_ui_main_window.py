@@ -145,3 +145,68 @@ def test_window_tolerates_a_session_without_a_shop_and_no_screens(make_session, 
     empty = MainWindow(session, [])
     qtbot.addWidget(empty)
     assert empty.screens == [] and empty.stack.count() == 0
+
+
+# ---- M3: the licence is re-checked while the app stays open ----
+
+def _past_expiry(monkeypatch):
+    from datetime import date
+    from retail import clock
+    monkeypatch.setattr(clock, "today", lambda: date(2100, 1, 1))
+
+
+def _real_window(make_session, qtbot, **kw):
+    from retail_ui.screens.data import DataScreen
+    from retail_ui.screens.items import ItemsScreen
+    session = make_session()
+    w = MainWindow(session, [ItemsScreen, DataScreen], **kw)
+    qtbot.addWidget(w)
+    return session, w
+
+
+def test_expiry_while_running_flips_everything_read_only_on_the_timer_slot(make_session, qtbot, monkeypatch):
+    session, w = _real_window(make_session, qtbot)
+    items_screen, data_screen = w.screens
+    assert w.banner.isHidden() and items_screen.add_button.isEnabled()
+    _past_expiry(monkeypatch)
+    w._check_license()
+    assert session.read_only and not w.banner.isHidden()
+    assert not items_screen.add_button.isEnabled()
+    assert data_screen.isEnabled()            # the owner can still back up, restore and activate
+
+
+def test_not_expired_stays_writable(make_session, qtbot):
+    session, w = _real_window(make_session, qtbot)
+    w._check_license()
+    w.nav.setCurrentRow(1)
+    w.nav.setCurrentRow(0)
+    assert not session.read_only and w.banner.isHidden() and w.screens[0].add_button.isEnabled()
+
+
+def test_navigating_rechecks_the_licence(make_session, qtbot, monkeypatch):
+    session, w = _real_window(make_session, qtbot)
+    _past_expiry(monkeypatch)
+    w.nav.setCurrentRow(1)
+    assert session.read_only and not w.banner.isHidden() and not w.screens[0].add_button.isEnabled()
+
+
+def test_a_failing_recheck_never_raises(make_session, qtbot, monkeypatch):
+    session, w = _real_window(make_session, qtbot)
+    _past_expiry(monkeypatch)
+    monkeypatch.setattr(session, "refresh_license", lambda: (_ for _ in ()).throw(OSError("disk")))
+    w._check_license()
+    w.nav.setCurrentRow(1)
+
+
+def test_the_timer_runs_at_the_given_interval_and_stops_on_close(make_session, qtbot, monkeypatch):
+    session, w = _real_window(make_session, qtbot, license_check_ms=50)
+    assert w._license_timer.isActive() and w._license_timer.interval() == 50
+    _past_expiry(monkeypatch)
+    qtbot.waitUntil(lambda: session.read_only, timeout=3000)       # the timer itself did it
+    w.close()
+    assert not w._license_timer.isActive()
+
+
+def test_default_interval_is_one_minute(make_session, qtbot):
+    _, w = _real_window(make_session, qtbot)
+    assert w._license_timer.interval() == 60_000

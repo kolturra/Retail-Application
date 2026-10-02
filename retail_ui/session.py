@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -100,6 +101,22 @@ class AppSession(QObject):
     def refresh_license(self) -> None:
         self.license = lic.apply_license(self.paths.license_path, self.public_key, self.machine_id)
         self.read_only_changed.emit(self.license.read_only)
+
+    def recheck_license(self) -> bool:
+        """Cheap check for a shop that stays open past its expiry date: no file access unless the
+        active licence has just expired, then re-evaluate (re-applies the write guard, emits
+        read_only_changed). Never raises. Returns True when the licence was re-evaluated."""
+        try:
+            state = self.license
+            if state.status != "active" or not state.expires:
+                return False
+            if clock.today() <= date.fromisoformat(state.expires):
+                return False
+            self.refresh_license()
+            return True
+        except Exception:
+            log.exception("licence re-check failed")
+            return False
 
     def activate(self, key: str):
         """Verify first; only a valid key is saved. An invalid key changes nothing."""

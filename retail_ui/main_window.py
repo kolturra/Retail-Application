@@ -1,5 +1,6 @@
 import logging
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QMainWindow, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -12,7 +13,7 @@ log = logging.getLogger("retail_ui")
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, session, screen_classes, parent=None, *, notice_key=None):
+    def __init__(self, session, screen_classes, parent=None, *, notice_key=None, license_check_ms=60_000):
         super().__init__(parent)
         self.session = session
         self.notice_key = notice_key
@@ -69,12 +70,21 @@ class MainWindow(QMainWindow):
             screen.apply_read_only(session.read_only)
         if self.screens:
             self.nav.setCurrentRow(0)
+        # a shop that leaves the app open past its expiry date must turn read-only without a restart
+        self._license_timer = QTimer(self)
+        self._license_timer.setInterval(license_check_ms)
+        self._license_timer.timeout.connect(self._check_license)
+        self._license_timer.start()
 
     # --- navigation / refresh -----------------------------------------------
     def _show_screen(self, row):
         if 0 <= row < len(self.screens):
+            self._check_license()
             self.stack.setCurrentIndex(row)
             self.screens[row].refresh()
+
+    def _check_license(self):
+        self.session.recheck_license()      # flips read_only_changed -> banner and every screen; never raises
 
     def _on_data_changed(self):
         self._update_status()  # the shop name may have been edited or restored
@@ -135,5 +145,6 @@ class MainWindow(QMainWindow):
 
     # --- closing -----------------------------------------------------------------
     def closeEvent(self, event):
+        self._license_timer.stop()
         self.session.backup_if_due()  # never raises: a backup problem must not trap the user
         event.accept()
