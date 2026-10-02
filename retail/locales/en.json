@@ -278,5 +278,7 @@
   "data.loc_primary": "main folder",
   "data.loc_extra": "second location",
   "data.folder_fallback": "The folder you chose is not available, so backups are going to: {path}",
-  "data.folder_in_use": "Backups are saved in: {path}"
+  "data.folder_in_use": "Backups are saved in: {path}",
+  "bill.hsn": "HSN",
+  "bill.place_of_supply": "Place of supply"
 }

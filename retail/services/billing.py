@@ -472,7 +472,7 @@ def get_bill_detail(conn, bill_id):
     if bill["party_id"] is not None:
         party = conn.execute("SELECT * FROM party WHERE id = ?", (bill["party_id"],)).fetchone()
     lines = conn.execute(
-        """SELECT l.*, i.name AS item_name, i.unit AS unit, i.tracking AS tracking,
+        """SELECT l.*, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, i.hsn AS hsn,
                   u.serial AS serial, u.batch_no AS batch_no
            FROM bill_line l JOIN item i ON i.id = l.item_id
            LEFT JOIN stock_unit u ON u.id = l.unit_id

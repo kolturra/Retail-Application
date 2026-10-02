@@ -278,5 +278,7 @@
   "data.loc_primary": "मुख्य फ़ोल्डर",
   "data.loc_extra": "दूसरी जगह",
   "data.folder_fallback": "आपका चुना हुआ फ़ोल्डर उपलब्ध नहीं है, इसलिए बैकअप यहाँ जा रहे हैं: {path}",
-  "data.folder_in_use": "बैकअप यहाँ सहेजे जाते हैं: {path}"
+  "data.folder_in_use": "बैकअप यहाँ सहेजे जाते हैं: {path}",
+  "bill.hsn": "एचएसएन कोड",
+  "bill.place_of_supply": "आपूर्ति का स्थान"
 }

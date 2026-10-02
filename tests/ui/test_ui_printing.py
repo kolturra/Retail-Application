@@ -131,3 +131,73 @@ def test_printer_page_sizes(qtbot):
     for layout, width in (("thermal_58", 58.0), ("thermal_80", 80.0)):
         size = render.make_printer(layout).pageLayout().pageSize().size(QPageSize.Unit.Millimeter)
         assert abs(size.width() - width) < 0.5
+
+
+# ---- M4: HSN column and place of supply on the A4 tax invoice ----
+
+def _html(conn, bill_id, layout="a4"):
+    return render._a4_html(bill_view.build_bill_view(conn, bill_id, layout=layout))
+
+
+def test_bill_detail_lines_expose_hsn(shop_conn):
+    bill_id = sale(shop_conn, hsn="3401")
+    assert billing.get_bill_detail(shop_conn, bill_id)["lines"][0]["hsn"] == "3401"
+
+
+def test_a4_has_hsn_column_with_values_and_blank_when_missing(shop_conn):
+    bill_id = billing.start_bill(shop_conn)
+    for name, hsn in (("Soap", "3401"), ("Loose", None)):
+        item = items.create_item(shop_conn, name=name, sell_price_paise=1000, gst_rate_bp=1800, hsn=hsn)
+        stock.record(shop_conn, item, 5000, "opening")
+        billing.add_line(shop_conn, bill_id, item, 1000)
+    total = billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"]
+    billing.finalize(shop_conn, bill_id, [("cash", total)])
+    v = bill_view.build_bill_view(shop_conn, bill_id, layout="a4")
+    assert [l.hsn for l in v.lines] == ["3401", ""]
+    html = render._a4_html(v)
+    assert f"<th>{i18n.tr('bill.hsn')}</th>" in html and "3401" in html
+    text = render.build_document(v).toPlainText()
+    assert "3401" in text and "Loose" in text
+
+
+def test_hsn_is_escaped(shop_conn):
+    html = _html(shop_conn, sale(shop_conn, hsn="<b>1</b>"))
+    assert "<b>1</b>" not in html and "&lt;b&gt;1&lt;/b&gt;" in html
+
+
+def test_place_of_supply_defaults_to_the_shop_state_intra_state(shop_conn):
+    ravi = parties.create_party(shop_conn, name="Ravi", state_code="36")
+    bill_id = sale(shop_conn, party_id=ravi)
+    v = bill_view.build_bill_view(shop_conn, bill_id)
+    assert v.place_of_supply == "36 - Telangana" and v.igst == "" and v.cgst != ""
+    html = render._a4_html(v)
+    assert i18n.tr("bill.place_of_supply") in html and "36 - Telangana" in html
+    walk_in = bill_view.build_bill_view(shop_conn, sale(shop_conn))
+    assert walk_in.place_of_supply == "36 - Telangana"      # no customer state -> shop state
+
+
+def test_place_of_supply_is_the_customer_state_inter_state_igst(shop_conn):
+    pune = parties.create_party(shop_conn, name="Pune", gstin="27ABCDE1234F1Z5", state_code="27")
+    v = bill_view.build_bill_view(shop_conn, sale(shop_conn, party_id=pune))
+    assert v.place_of_supply == "27 - Maharashtra" and v.igst != "" and v.cgst == ""
+    html = render._a4_html(v)
+    assert "27 - Maharashtra" in html and "27ABCDE1234F1Z5" in html      # customer GSTIN shown
+
+
+def test_estimate_bill_has_no_place_of_supply(shop_conn):
+    shop.update_shop(shop_conn, gst_enabled=False)
+    assert bill_view.build_bill_view(shop_conn, sale(shop_conn)).place_of_supply == ""
+
+
+def test_thermal_layout_has_no_hsn_or_place_of_supply(shop_conn):
+    bill_id = sale(shop_conn, hsn="3401")
+    html = render._thermal_html(bill_view.build_bill_view(shop_conn, bill_id, layout="thermal_80"))
+    assert "3401" not in html and i18n.tr("bill.place_of_supply") not in html
+
+
+@pytest.mark.parametrize("lang", ["hi", "te"])
+def test_new_print_labels_differ_from_english(lang):
+    en = {k: i18n.tr(k) for k in ("bill.hsn", "bill.place_of_supply")}
+    i18n.set_language(lang)
+    for key, english in en.items():
+        assert i18n.tr(key) != english

@@ -64,19 +64,22 @@ def _a4_html(v):
         out.append(f"<br>{e(tr('tax.gstin'))}: {e(v.shop_gstin)}")
     out.append(f"</p><h3>{e(v.title)}</h3>")
     out.append(f"<p>{e(tr('print.bill_no'))}: <b>{e(v.bill_no)}</b> &nbsp;&nbsp; "
-               f"{e(tr('common.date'))}: {e(v.date)}</p>")
+               f"{e(tr('common.date'))}: {e(v.date)}")
+    if v.place_of_supply:
+        out.append(f"<br>{e(tr('bill.place_of_supply'))}: {e(v.place_of_supply)}")
+    out.append("</p>")
     if v.customer_name:
         extra = " ".join(x for x in (v.customer_phone, f"{tr('tax.gstin')}: {v.customer_gstin}"
                                      if v.customer_gstin else "") if x)
         out.append(f"<p>{e(tr('bill.customer'))}: <b>{e(v.customer_name)}</b> {e(extra)}</p>")
     out.append("<table width='100%' border='1' cellspacing='0' cellpadding='4'><tr>"
-               f"<th>#</th><th align='left'>{e(tr('bill.item'))}</th><th>{e(tr('bill.qty'))}</th>"
+               f"<th>#</th><th align='left'>{e(tr('bill.item'))}</th><th>{e(tr('bill.hsn'))}</th><th>{e(tr('bill.qty'))}</th>"
                f"<th>{e(tr('bill.rate'))}</th><th>{e(tr('counter.gst'))}</th><th>{e(tr('bill.total'))}</th></tr>")
     for i, line in enumerate(v.lines, 1):
         name = e(line.name)
         if line.serial:
             name += f"<br>{e(tr('trk.serial'))}: {e(line.serial)}"
-        out.append(f"<tr><td align='right'>{i}</td><td>{name}</td><td align='right'>{e(line.qty)}</td>"
+        out.append(f"<tr><td align='right'>{i}</td><td>{name}</td><td>{e(line.hsn)}</td><td align='right'>{e(line.qty)}</td>"
                    f"<td align='right'>{e(line.rate)}</td><td align='right'>{e(line.gst)}</td>"
                    f"<td align='right'>{e(line.amount)}</td></tr>")
     out.append("</table><br><table align='right' cellspacing='0' cellpadding='3'>")
