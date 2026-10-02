@@ -1,3 +1,5 @@
+import re
+
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QPushButton, QTableView, QVBoxLayout)
 
@@ -40,7 +42,7 @@ class PartyDialog(QDialog):
         form.labelForField(self.type_box).setHidden(self._editing)
         box, self.ok_button = ok_cancel(self)
         form.addRow(box)
-        for signal in (self.name_edit.textChanged, self.gstin_edit.textChanged, self.state_box.currentIndexChanged):
+        for signal in (self.name_edit.textChanged, self.gstin_edit.textChanged, self.phone_edit.textChanged, self.state_box.currentIndexChanged):
             signal.connect(lambda *_: self._check())
         self._check()
 
@@ -48,7 +50,9 @@ class PartyDialog(QDialog):
         gstin = self.gstin_edit.text().strip()
         gstin_ok = not gstin or (bool(self.state_box.currentData())
                                  and validators.gstin_error(gstin, self.state_box.currentData()) is None)
-        self.ok_button.setEnabled(bool(self.name_edit.text().strip()) and gstin_ok)
+        phone = self.phone_edit.text().strip()
+        phone_ok = not phone or (bool(validators.phone_digits(phone)) and re.fullmatch(r"[0-9 +()\-]+", phone) is not None)
+        self.ok_button.setEnabled(bool(self.name_edit.text().strip()) and gstin_ok and phone_ok)
 
     def values(self):
         out = {"name": self.name_edit.text().strip(), "phone": self.phone_edit.text().strip(),

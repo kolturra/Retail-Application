@@ -153,10 +153,14 @@ def test_receive_payment_is_not_offered_for_suppliers_or_without_selection(scree
 def test_read_only_and_language(screen):
     screen.apply_read_only(True)
     assert not any(b.isEnabled() for b in (screen.add_button, screen.edit_button, screen.receive_button))
+    en = {k: i18n.tr(k) for k in ("party.balance", "party.customers", "party.suppliers", "party.dues")}
     i18n.set_language("hi")
     screen.retranslate()
-    assert screen.model.headerData(2, Qt.Orientation.Horizontal) == i18n.tr("party.balance")
-    assert screen.view_box.itemText(0) == i18n.tr("party.customers")
+    hi = {k: i18n.tr(k) for k in en}
+    assert all(hi[k] != en[k] for k in en)
+    assert screen.model.headerData(2, Qt.Orientation.Horizontal) == hi["party.balance"]
+    assert [screen.view_box.itemText(i) for i in range(3)] == [hi["party.customers"], hi["party.suppliers"],
+                                                               hi["party.dues"]]
 
 
 def test_read_only_blocks_the_actions_themselves(screen):
@@ -173,3 +177,33 @@ def test_read_only_blocks_the_actions_themselves(screen):
     screen.receive_payment()
     screen.apply_read_only(False)
     assert all(b.isEnabled() for b in (screen.add_button, screen.edit_button, screen.receive_button))
+
+
+def test_party_dialog_gates_a_bad_phone(qtbot):
+    d = PartyDialog()
+    qtbot.addWidget(d)
+    d.name_edit.setText("Ravi")
+    d.phone_edit.setText("abc")
+    assert not d.ok_button.isEnabled()
+    d.phone_edit.setText("+91 98765-00001")
+    assert d.ok_button.isEnabled()
+    d.phone_edit.setText("")
+    assert d.ok_button.isEnabled()
+
+
+def test_receive_payment_engine_error_goes_to_the_hook_and_refreshes(screen, monkeypatch):
+    conn = screen.session.conn
+    ravi = parties.create_party(conn, name="Ravi")
+    owe(conn, ravi, 5000)
+    screen.refresh()
+    screen.table.selectRow(0)
+    screen._ask_receive = lambda name, due: (2000, "cash", "")
+
+    def boom(*a, **k):
+        raise ValueError("rejected")
+    monkeypatch.setattr(parties, "receive_payment", boom)
+    refreshed = []
+    real = screen.refresh
+    screen.refresh = lambda: refreshed.append(1) or real()
+    screen.receive_payment()
+    assert len(screen.errors) == 1 and refreshed and cell(screen, 0, 2) == "₹50.00"
