@@ -288,5 +288,6 @@
   "dlg.batch_title": "बैच चुनें",
   "dlg.batch_row": "बैच {batch_no}  |  समाप्ति {expiry}  |  स्टॉक में {qty}",
   "dlg.batch_no_expiry": "कोई नहीं",
-  "dlg.batch_expired": "समाप्त"
+  "dlg.batch_expired": "समाप्त",
+  "counter.whatsapp_last": "पिछला बिल व्हाट्सऐप करें"
 }

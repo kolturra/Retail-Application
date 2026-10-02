@@ -427,3 +427,79 @@ def test_f7_is_the_batch_shortcut_and_is_disabled_when_read_only(screen):
     i18n.set_language("hi")
     screen.retranslate()
     assert screen.batch_button.text() == f"{i18n.tr('counter.batch')} (F7)" and "Change" not in screen.batch_button.text()
+
+
+# --- WhatsApp the just-paid bill ------------------------------------------------------------
+def _sell_with_customer(screen, phone="98765 43210"):
+    conn = screen.session.conn
+    item = items.create_item(conn, name="Soap", sell_price_paise=11800, buy_price_paise=7777, gst_rate_bp=1800,
+                             barcodes=["8901"])
+    stock.record(conn, item, 50_000, "opening")
+    ravi = parties.create_party(conn, name="Ravi Kumar", phone=phone)
+    type_and_enter(screen, "8901")
+    screen._ask_customer = lambda: ("set", ravi)
+    screen.pick_customer()
+    screen._ask_payments = lambda total, party_id: [("cash", total)]
+    screen.pay()
+
+
+def test_whatsapp_last_button_state_before_and_after_pay(screen):
+    assert screen.whatsapp_button.text() == i18n.tr("counter.whatsapp_last")
+    assert not screen.whatsapp_button.isEnabled()
+    screen.whatsapp_last()                                       # nothing sold: no-op
+    _sell_with_customer(screen)
+    assert screen.whatsapp_button.isEnabled() and screen.errors == []
+
+
+def test_whatsapp_last_shares_customer_and_bill_details_only_and_never_automatically(screen):
+    opened = []
+    screen.whatsapp_opener = opened.append
+    _sell_with_customer(screen)
+    assert opened == []                                          # paying never opens WhatsApp by itself
+    screen.whatsapp_last()
+    assert len(opened) == 1 and opened[0].startswith("https://wa.me/919876543210?text=")
+    import urllib.parse
+    text = urllib.parse.unquote(opened[0])
+    assert "Ravi Kumar" in text and "S000001" in text and "Soap" in text and "118.00" in text
+    assert "7777" not in text and "77.77" not in text and "GSTIN" not in text   # no purchase price, no shop GSTIN
+
+
+def test_whatsapp_last_asks_for_a_phone_when_the_customer_has_none(screen, monkeypatch):
+    from retail_ui import print_ui
+    opened = []
+    screen.whatsapp_opener = opened.append
+    _sell_with_customer(screen, phone=None)
+    asked = []
+    monkeypatch.setattr(print_ui.helpers, "ask_text", lambda *a, **k: asked.append(a) or ("98765 43210", True))
+    screen.whatsapp_last()
+    assert len(asked) == 1 and opened[0].startswith("https://wa.me/919876543210")
+    monkeypatch.setattr(print_ui.helpers, "ask_text", lambda *a, **k: ("", False))
+    screen.whatsapp_last()
+    assert len(opened) == 1                                       # cancelling the prompt opens nothing
+
+
+def test_whatsapp_last_works_in_read_only_and_retranslates(screen):
+    opened = []
+    screen.whatsapp_opener = opened.append
+    _sell_with_customer(screen)
+    screen.apply_read_only(True)
+    assert screen.whatsapp_button.isEnabled()
+    screen.whatsapp_last()
+    assert len(opened) == 1
+    en = screen.whatsapp_button.text()
+    i18n.set_language("te")
+    screen.retranslate()
+    assert screen.whatsapp_button.text() == i18n.tr("counter.whatsapp_last") != en
+
+
+def test_whatsapp_button_disables_again_after_a_restore(make_session, qtbot):
+    session = make_session()
+    sc = CounterScreen(session)
+    qtbot.addWidget(sc)
+    sc.errors = []
+    sc._show_error = lambda exc: sc.errors.append(exc)
+    sc.last_bill_id = 1
+    sc._sync_last_bill_buttons()
+    assert sc.whatsapp_button.isEnabled()
+    sc._on_restored()
+    assert not sc.whatsapp_button.isEnabled()

@@ -95,6 +95,7 @@ installed app are all untested until this checklist is worked through.
 - [ ] An A4 printer prints a GST invoice.
 - [ ] Save as PDF produces a readable file.
 - [ ] The WhatsApp bill link opens WhatsApp or WhatsApp Web with the customer's number and bill details only.
+- [ ] At the Counter, after paying, "WhatsApp last bill" is enabled (and nothing opens by itself); clicking it opens the same customer-and-bill-only message, and asks for a number when the customer has none.
 - [ ] A 5,000-item catalogue stays responsive when scanning and searching.
 
 ## 10. Upgrade

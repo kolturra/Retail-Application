@@ -288,5 +288,6 @@
   "dlg.batch_title": "బ్యాచ్ ఎంచుకోండి",
   "dlg.batch_row": "బ్యాచ్ {batch_no}  |  గడువు {expiry}  |  స్టాక్‌లో {qty}",
   "dlg.batch_no_expiry": "లేదు",
-  "dlg.batch_expired": "గడువు ముగిసింది"
+  "dlg.batch_expired": "గడువు ముగిసింది",
+  "counter.whatsapp_last": "చివరి బిల్లును వాట్సాప్ చేయండి"
 }

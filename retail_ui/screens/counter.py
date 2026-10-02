@@ -19,6 +19,7 @@ HEADERS = ["bill.item", "bill.qty", "bill.rate", "bill.discount", "counter.gst",
 class CounterScreen(Screen):
     nav_key = "nav.counter"
     sale_completed = Signal(int)
+    whatsapp_opener = None      # tests set a callable(url); None = the real wa.me link via the desktop
 
     def __init__(self, session, parent=None):
         super().__init__(session, parent)
@@ -59,6 +60,7 @@ class CounterScreen(Screen):
         self.delete_button = self._button("counter.delete_line", " (F6)", self.delete_selected_line, row)
         self.batch_button = self._button("counter.batch", " (F7)", self.change_batch, row)
         self.print_button = self._button("counter.print_last", " (F10)", self.print_last, row)
+        self.whatsapp_button = self._button("counter.whatsapp_last", "", self.whatsapp_last, row)
         self.pay_button = self._button("counter.pay", " (F12)", self.pay, row)
         self.pay_button.setStyleSheet("font-weight: bold; padding: 8px 18px;")
         layout.addLayout(row)
@@ -73,6 +75,7 @@ class CounterScreen(Screen):
             self.shortcut_keys[key] = shortcut
 
         self.bind(self.entry, "counter.entry_hint", "setPlaceholderText")
+        self._sync_last_bill_buttons()
         session.restored.connect(self._on_restored)
         self.retranslate()
 
@@ -93,6 +96,7 @@ class CounterScreen(Screen):
         """The database was replaced: a bill id (even one that exists again) belongs to other data."""
         self.controller.bill_id = None
         self.last_bill_id = None
+        self._sync_last_bill_buttons()
 
     def refresh(self):
         self._drop_stale_bill()
@@ -237,6 +241,16 @@ class CounterScreen(Screen):
                 self.controller.discard()
         self._guarded(run)
 
+    def _sync_last_bill_buttons(self):
+        """WhatsApp needs a finished bill to share; like printing, it is allowed in read-only mode."""
+        self.whatsapp_button.setEnabled(self.last_bill_id is not None)
+
+    def whatsapp_last(self):
+        """Share the last finished bill on request only: nothing opens automatically after payment."""
+        if self.last_bill_id is not None:
+            self._guarded(lambda: print_ui.send_whatsapp(self, self.session, self.last_bill_id,
+                                                         opener=self.whatsapp_opener))
+
     def print_last(self):
         if self.last_bill_id is not None:
             self._guarded(lambda: print_ui.preview_bill(self, self.session, self.last_bill_id))
@@ -253,6 +267,7 @@ class CounterScreen(Screen):
                 return
             bill_id, bill_no = self.controller.pay(payments)
             self.last_bill_id = bill_id
+            self._sync_last_bill_buttons()
             self.status_label.setText(tr("counter.saved", bill_no=bill_no))
             self.sale_completed.emit(bill_id)
             if self.session.settings.auto_print:
