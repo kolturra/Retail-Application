@@ -54,18 +54,6 @@ def _next_number(conn, name, prefix):
     return f"{prefix}{value:06d}"
 
 
-def _supply_state(conn, bill):
-    """Place of supply to freeze on a bill at finalization (same rule _retax splits the tax by);
-    None for an estimate, which carries no tax."""
-    if bill["gst_mode"] != "gst":
-        return None
-    party_state = None
-    if bill["party_id"] is not None:
-        party_state = conn.execute(
-            "SELECT state_code FROM party WHERE id = ?", (bill["party_id"],)).fetchone()["state_code"]
-    return gst.place_of_supply(shop.get_shop(conn)["state_code"], party_state)
-
-
 def _retax(conn, bill_id):
     """Recompute every line's tax and the bill totals from the stored line amounts."""
     bill = _bill(conn, bill_id)
@@ -76,6 +64,8 @@ def _retax(conn, bill_id):
             "SELECT state_code FROM party WHERE id = ?", (bill["party_id"],)
         ).fetchone()["state_code"]
     intra = gst.is_intra_state(s["state_code"], party_state)
+    # stored with the split it explains, so a frozen invoice can never contradict itself
+    place = gst.place_of_supply(s["state_code"], party_state) if bill["gst_mode"] == "gst" else None
     inclusive = bool(s["price_includes_gst"])
     taxable = cgst = sgst = igst = grand = 0
     for line in conn.execute(
@@ -96,8 +86,8 @@ def _retax(conn, bill_id):
     rounded, round_off = money.round_to_rupee(grand)
     conn.execute(
         """UPDATE bill SET taxable_paise=?, cgst_paise=?, sgst_paise=?, igst_paise=?,
-               round_off_paise=?, total_paise=? WHERE id = ?""",
-        (taxable, cgst, sgst, igst, round_off, rounded, bill_id),
+               round_off_paise=?, total_paise=?, place_of_supply_state=? WHERE id = ?""",
+        (taxable, cgst, sgst, igst, round_off, rounded, place, bill_id),
     )
 
 
@@ -198,7 +188,7 @@ def add_line(conn, bill_id, item_id, qty_milli=1000, *, serial=None, unit_id=Non
             """INSERT INTO bill_line(bill_id, item_id, unit_id, qty_milli, rate_paise, discount_paise,
                    amount_paise, gst_rate_bp, hsn) VALUES (?,?,?,?,?,?,?,?,?)""",
             (bill_id, item_id, unit_id, qty_milli, rate, discount_paise, amount, item["gst_rate_bp"],
-             item["hsn"]),
+             item["hsn"] or ""),     # '' = no HSN at sale; NULL only marks pre-snapshot rows
         )
         _retax(conn, bill_id)
     return cur.lastrowid
@@ -300,9 +290,8 @@ def finalize(conn, bill_id, payments, *, today=None):
         bill_no = _next_number(conn, "sale", "S")
         now = clock.now_iso()
         conn.execute(
-            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ?, place_of_supply_state = ?"
-            " WHERE id = ?",
-            (bill_no, now, _supply_state(conn, bill), bill_id),
+            "UPDATE bill SET status = 'final', bill_no = ?, finalized_at = ? WHERE id = ?",
+            (bill_no, now, bill_id),
         )
         for line in lines:
             stock._record(conn, line["item_id"], -line["qty_milli"], "sale", "bill", bill_id, line["unit_id"])
@@ -489,7 +478,7 @@ def get_bill_detail(conn, bill_id):
     lines = conn.execute(
         """SELECT l.id, l.bill_id, l.item_id, l.unit_id, l.ref_line_id, l.qty_milli, l.rate_paise,
                   l.discount_paise, l.amount_paise, l.gst_rate_bp, l.taxable_paise, l.cgst_paise,
-                  l.sgst_paise, l.igst_paise, l.total_paise, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, COALESCE(l.hsn, i.hsn) AS hsn,
+                  l.sgst_paise, l.igst_paise, l.total_paise, i.name AS item_name, i.unit AS unit, i.tracking AS tracking, CASE WHEN l.hsn IS NULL THEN i.hsn ELSE l.hsn END AS hsn,
                   u.serial AS serial, u.batch_no AS batch_no
            FROM bill_line l JOIN item i ON i.id = l.item_id
            LEFT JOIN stock_unit u ON u.id = l.unit_id

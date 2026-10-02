@@ -48,6 +48,7 @@ class AppSession(QObject):
 
     def __init__(self, paths, settings, conn, license_state, *, public_key, machine_id):
         super().__init__()
+        self._recheck_failing = False
         self.paths = paths
         self.settings = settings
         self.conn = conn
@@ -116,7 +117,7 @@ class AppSession(QObject):
             self._recheck_failing = False
             return True
         except Exception:
-            if not getattr(self, "_recheck_failing", False):     # a persistent fault is logged once,
+            if not self._recheck_failing:     # a persistent fault is logged once,
                 log.exception("licence re-check failed")         # not on every tick
             self._recheck_failing = True
             return False

@@ -3,7 +3,7 @@ import shutil
 import pytest
 
 from retail import db
-from retail.services import billing, items, parties, shop, stock
+from retail.services import billing, gst, items, parties, shop, stock
 
 
 def _sale(conn, *, hsn="3401", party_id=None, qty=2000):
@@ -29,10 +29,61 @@ def test_return_lines_copy_the_original_hsn(shop_conn):
     assert billing.get_bill_detail(shop_conn, ret)["lines"][0]["hsn"] == "3401"
 
 
-def test_a_line_without_a_snapshot_falls_back_to_the_item_hsn(shop_conn):
+def test_no_hsn_at_sale_is_stored_as_blank_and_stays_blank(shop_conn):
     item, bill_id, _ = _sale(shop_conn, hsn=None)
     shop_conn.execute("UPDATE item SET hsn = '1234' WHERE id = ?", (item,))
+    assert billing.get_bill_detail(shop_conn, bill_id)["lines"][0]["hsn"] == ""
+
+
+def test_a_legacy_null_line_hsn_falls_back_to_the_item_hsn(shop_conn):
+    item = items.create_item(shop_conn, name="Old", sell_price_paise=100, hsn="1234")
+    stock.record(shop_conn, item, 5000, "opening")
+    bill_id = billing.start_bill(shop_conn)
+    billing.add_line(shop_conn, bill_id, item, 1000)
+    shop_conn.execute("UPDATE bill_line SET hsn = NULL WHERE bill_id = ?", (bill_id,))   # as before 0002
+    billing.finalize(shop_conn, bill_id, [("cash", billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"])])
     assert billing.get_bill_detail(shop_conn, bill_id)["lines"][0]["hsn"] == "1234"
+
+
+def _split_agrees_with_place(conn, bill_id):
+    bill = billing.get_bill_detail(conn, bill_id)["bill"]
+    intra = gst.is_intra_state(shop.get_shop(conn)["state_code"], bill["place_of_supply_state"])
+    assert intra == (bill["igst_paise"] == 0 and bill["cgst_paise"] > 0), dict(bill)
+    return bill
+
+
+def test_party_state_edited_while_held_keeps_place_and_split_consistent(shop_conn):
+    ravi = parties.create_party(shop_conn, name="Ravi", state_code="36")
+    item = items.create_item(shop_conn, name="Soap", sell_price_paise=11800, gst_rate_bp=1800)
+    stock.record(shop_conn, item, 50_000, "opening")
+    bill_id = billing.start_bill(shop_conn, party_id=ravi)
+    billing.add_line(shop_conn, bill_id, item, 2000)
+    parties.update_party(shop_conn, ravi, name="Ravi", state_code="27")      # edited while the bill is held
+    billing.add_line(shop_conn, bill_id, item, 1000)                          # any retax picks it up
+    billing.finalize(shop_conn, bill_id, [("cash", billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"])])
+    bill = _split_agrees_with_place(shop_conn, bill_id)
+    assert bill["place_of_supply_state"] == "27" and bill["igst_paise"] > 0
+    parties.update_party(shop_conn, ravi, name="Ravi", state_code="36")      # later edits change nothing
+    assert billing.get_bill_detail(shop_conn, bill_id)["bill"]["place_of_supply_state"] == "27"
+
+
+def test_set_party_and_back_to_walk_in_stays_consistent(shop_conn):
+    pune = parties.create_party(shop_conn, name="Pune", state_code="27")
+    item = items.create_item(shop_conn, name="Soap", sell_price_paise=11800, gst_rate_bp=1800)
+    stock.record(shop_conn, item, 50_000, "opening")
+    bill_id = billing.start_bill(shop_conn)
+    billing.add_line(shop_conn, bill_id, item, 1000)
+    billing.set_party(shop_conn, bill_id, pune)
+    assert _split_agrees_with_place(shop_conn, bill_id)["place_of_supply_state"] == "27"
+    billing.set_party(shop_conn, bill_id, None)
+    billing.finalize(shop_conn, bill_id, [("cash", billing.get_bill(shop_conn, bill_id)["bill"]["total_paise"])])
+    assert _split_agrees_with_place(shop_conn, bill_id)["place_of_supply_state"] == "36"
+
+
+def test_party_without_a_state_is_intra_state_at_the_shop_state(shop_conn):
+    nostate = parties.create_party(shop_conn, name="NoState")
+    _, bill_id, _ = _sale(shop_conn, party_id=nostate)
+    assert _split_agrees_with_place(shop_conn, bill_id)["place_of_supply_state"] == "36"
 
 
 def test_place_of_supply_is_frozen_on_the_bill_and_copied_to_returns(shop_conn):
