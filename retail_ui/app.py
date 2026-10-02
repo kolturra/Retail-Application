@@ -31,7 +31,12 @@ def configure_logging(paths) -> logging.Handler:
 
 def install_excepthook():
     """Unhandled errors are logged and shown as a translated message, never as a traceback."""
+    previous = sys.excepthook
+
     def hook(exc_type, exc, tb):
+        if not issubclass(exc_type, Exception):  # Ctrl+C / SystemExit: not an application error
+            previous(exc_type, exc, tb)
+            return
         log.critical("unhandled exception", exc_info=(exc_type, exc, tb))
         try:
             show_error(None, exc)
@@ -58,7 +63,11 @@ def selftest() -> int:
         if len(public_key.PUBLIC_KEY) != 32:
             raise RuntimeError("the embedded licence public key is not 32 bytes")
         try:
+            english = set(i18n._load(i18n.DEFAULT_LANGUAGE))
             for code in i18n.LANGUAGES:
+                missing = english - set(i18n._load(code))
+                if missing:
+                    raise RuntimeError(f"catalogue {code} is missing {len(missing)} key(s), e.g. {sorted(missing)[0]}")
                 i18n.set_language(code)
                 i18n.tr("bill.total")
         finally:
@@ -105,6 +114,13 @@ def main(argv=None) -> int:
         window = build_window(session)
         window.show()
         return _run_event_loop(qt_app)
+    except Exception as exc:
+        log.critical("the application failed", exc_info=True)
+        try:
+            show_error(None, exc)
+        except Exception:
+            log.exception("could not show the error to the user")
+        return 1
     finally:
         if session is not None:
             try:

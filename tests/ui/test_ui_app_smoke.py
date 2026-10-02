@@ -178,8 +178,16 @@ def test_main_runs_the_window_closes_the_session_and_releases_the_log(monkeypatc
     session = make_session()
     monkeypatch.setattr(app, "bootstrap", lambda *a, **k: session)
     before = list(logging.getLogger("retail_ui").handlers)
+    old_hook = sys.excepthook
+    fonts_seen = []
+    monkeypatch.setattr(app.fonts, "apply_language_font", lambda qt_app, code: fonts_seen.append(code))
+    built = []
+    real_build = app.build_window
+    monkeypatch.setattr(app, "build_window", lambda s: built.append(list(fonts_seen)) or real_build(s))
     assert app.main(["retail"]) == 0
     assert main_env == [True]
+    assert fonts_seen == ["en", "en"] and built == [["en", "en"]]   # shop language applied before the window
+    assert sys.excepthook is old_hook                               # restored by main itself
     assert logging.getLogger("retail_ui").handlers == before        # the log handler did not leak
     with pytest.raises(Exception):
         session.conn.execute("SELECT 1")                            # the session was closed
@@ -188,7 +196,16 @@ def test_main_runs_the_window_closes_the_session_and_releases_the_log(monkeypatc
 def test_main_survives_recovery_mode(monkeypatch, main_env, make_session):
     session = recovery_session(make_session)
     monkeypatch.setattr(app, "bootstrap", lambda *a, **k: session)
-    assert app.main(["retail"]) == 0 and main_env == [True]
+    windows = []
+    real = app.build_window
+    monkeypatch.setattr(app, "build_window", lambda s: windows.append(real(s)) or windows[-1])
+    try:
+        assert app.main(["retail"]) == 0 and main_env == [True]
+        assert [type(s) for s in windows[0].screens] == [DataScreen]
+    finally:
+        for w in windows:
+            w.close()
+            w.deleteLater()
 
 
 def test_a_failing_backup_never_blocks_closing(make_session, qtbot, monkeypatch):
@@ -197,3 +214,56 @@ def test_a_failing_backup_never_blocks_closing(make_session, qtbot, monkeypatch)
     monkeypatch.setattr(backup, "backup_now", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     window.close()                                                  # must not raise
     assert not window.isVisible()
+
+
+def test_main_logs_and_shows_the_translated_message_when_bootstrap_fails(monkeypatch, main_env, paths):
+    shown = []
+    monkeypatch.setattr(app, "show_error", lambda parent, exc: shown.append(errors.message_for(exc)))
+    monkeypatch.setattr(app, "bootstrap", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("corrupt db")))
+    before = list(logging.getLogger("retail_ui").handlers)
+    old_hook = sys.excepthook
+    assert app.main(["retail"]) == 1
+    assert shown == [i18n.tr("err.unexpected")]
+    assert "corrupt db" in paths.log_path.read_text(encoding="utf-8")   # logged before the handler was removed
+    assert logging.getLogger("retail_ui").handlers == before and sys.excepthook is old_hook
+
+
+def test_main_cleans_up_when_the_event_loop_raises(monkeypatch, main_env, make_session):
+    session = make_session()
+    monkeypatch.setattr(app, "bootstrap", lambda *a, **k: session)
+    monkeypatch.setattr(app, "show_error", lambda parent, exc: None)
+    monkeypatch.setattr(app, "_run_event_loop", lambda qt_app: (_ for _ in ()).throw(RuntimeError("loop")))
+    before = list(logging.getLogger("retail_ui").handlers)
+    old_hook = sys.excepthook
+    assert app.main(["retail"]) == 1
+    with pytest.raises(Exception):
+        session.conn.execute("SELECT 1")
+    assert logging.getLogger("retail_ui").handlers == before and sys.excepthook is old_hook
+
+
+def test_main_survives_a_failing_error_dialog(monkeypatch, main_env):
+    monkeypatch.setattr(app, "show_error", lambda parent, exc: (_ for _ in ()).throw(RuntimeError("no GUI")))
+    monkeypatch.setattr(app, "bootstrap", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    assert app.main(["retail"]) == 1
+
+
+def test_the_exception_hook_delegates_interrupts_to_the_previous_hook(monkeypatch):
+    shown, previous = [], []
+    monkeypatch.setattr(app, "show_error", lambda parent, exc: shown.append(exc))
+    old = sys.excepthook
+    sys.excepthook = lambda *a: previous.append(a[0])
+    try:
+        hook = app.install_excepthook()
+        hook(KeyboardInterrupt, KeyboardInterrupt(), None)
+        hook(SystemExit, SystemExit(0), None)
+    finally:
+        sys.excepthook = old
+    assert previous == [KeyboardInterrupt, SystemExit] and shown == []
+
+
+def test_selftest_fails_when_a_translation_misses_a_key(monkeypatch, capsys):
+    catalogue = dict(i18n._load("te"))
+    catalogue.pop("err.unexpected")
+    monkeypatch.setitem(i18n._catalogues, "te", catalogue)
+    assert app.selftest() == 1
+    assert "err.unexpected" in capsys.readouterr().err
