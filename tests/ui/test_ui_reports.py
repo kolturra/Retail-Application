@@ -34,6 +34,11 @@ def seed(conn):
     billing.create_return(conn, bill_id, [(line_id, 1000)])
 
 
+def _read(path):
+    with path.open(encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
 def cell(model, row, col):
     return model.data(model.index(row, col))
 
@@ -77,7 +82,8 @@ def test_bad_range_is_reported_and_clears_the_tables(screen):
     screen.from_edit.setDate(QDate(2030, 1, 1))
     screen.to_edit.setDate(QDate(2020, 1, 1))
     screen.refresh()
-    assert len(screen.errors) >= 1 and screen.sales_model.rowCount() == 0
+    assert screen.errors == [] and screen.sales_model.rowCount() == 0 and screen.gst_model.rowCount() == 0
+    assert screen.status_label.text() == i18n.tr("rep.bad_range")
 
 
 def test_export_sales_register_csv(screen, tmp_path):
@@ -85,7 +91,7 @@ def test_export_sales_register_csv(screen, tmp_path):
     screen.refresh()
     screen._ask_save_path = lambda name: str(tmp_path / name)
     screen.export_sales()
-    rows = list(csv.DictReader((tmp_path / "sales_register.csv").open(encoding="utf-8-sig")))
+    rows = _read(tmp_path / "sales_register.csv")
     assert [r["bill_no"] for r in rows] == ["S000001", "R000001"] and rows[0]["total"] == "236.00"
     assert rows[1]["total"] == "-118.00" and "sales_register.csv" in screen.status_label.text()
 
@@ -94,7 +100,7 @@ def test_export_gst_summary_csv(screen, tmp_path):
     seed(screen.session.conn)
     screen._ask_save_path = lambda name: str(tmp_path / name)
     screen.export_gst()
-    rows = list(csv.DictReader((tmp_path / "gst_summary.csv").open(encoding="utf-8-sig")))
+    rows = _read(tmp_path / "gst_summary.csv")
     assert rows == [{"gst_rate_bp": "1800", "taxable": "100.00", "cgst": "9.00", "sgst": "9.00", "igst": "0.00"}]
 
 
@@ -113,10 +119,22 @@ def test_unwritable_export_path_is_reported(screen, tmp_path):
     assert len(screen.errors) == 1
 
 
-def test_exports_stay_available_when_read_only_and_headers_retranslate(screen):
+def test_exports_stay_available_when_read_only_and_texts_retranslate(screen, tmp_path):
     screen.apply_read_only(True)
     assert screen.export_sales_button.isEnabled() and screen.export_gst_button.isEnabled()
+    screen._ask_save_path = lambda name: str(tmp_path / name)
+    screen.export_sales()
+    assert screen.status_label.text()
+    en = (screen.tabs.tabText(0), screen.sales_model.headerData(3, Qt.Orientation.Horizontal),
+          screen.export_sales_button.text())
     i18n.set_language("te")
     screen.retranslate()
+    assert screen.status_label.text() == ""
     assert screen.sales_model.headerData(0, Qt.Orientation.Horizontal) == i18n.tr("print.bill_no")
     assert screen.tabs.tabText(0) == i18n.tr("rep.tab_sales")
+    assert screen.sales_model.headerData(3, Qt.Orientation.Horizontal) == i18n.tr("bill.customer")
+    assert screen.export_sales_button.text() == i18n.tr("rep.export_sales")
+    assert (screen.tabs.tabText(0), screen.sales_model.headerData(3, Qt.Orientation.Horizontal),
+            screen.export_sales_button.text()) != en
+    assert all(a != b for a, b in zip((screen.tabs.tabText(0), screen.sales_model.headerData(3, Qt.Orientation.Horizontal),
+               screen.export_sales_button.text()), en))

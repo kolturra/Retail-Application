@@ -211,5 +211,6 @@
   "rep.by_mode": "भुगतान के तरीके से",
   "rep.export_sales": "बिक्री रजिस्टर एक्सपोर्ट करें (CSV)",
   "rep.export_gst": "GST सारांश एक्सपोर्ट करें (CSV)",
-  "rep.exported": "सहेजा गया: {path}"
+  "rep.exported": "सहेजा गया: {path}",
+  "rep.bad_range": "प्रारंभ तिथि अंतिम तिथि के बाद है"
 }

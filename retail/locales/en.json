@@ -211,5 +211,6 @@
   "rep.by_mode": "By payment mode",
   "rep.export_sales": "Export sales register (CSV)",
   "rep.export_gst": "Export GST summary (CSV)",
-  "rep.exported": "Saved: {path}"
+  "rep.exported": "Saved: {path}",
+  "rep.bad_range": "From date is after To date"
 }

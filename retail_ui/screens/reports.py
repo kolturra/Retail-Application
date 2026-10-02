@@ -74,18 +74,33 @@ class ReportsScreen(Screen):
     def retranslate(self):
         super().retranslate()
         self._tab_titles()
+        self.status_label.clear()
         self.refresh()
+
+    def _clear_tables(self):
+        for model in (self.sales_model, self.gst_model, self.day_model):
+            model.set_rows([])
+
+    def _mode_text(self, mode):
+        try:
+            return tr(f"pay.{mode}")
+        except KeyError:
+            return str(mode)
 
     def refresh(self):
         conn = self.session.conn
+        start, end = self._range()
+        if start > end:
+            self._clear_tables()
+            self.status_label.setText(tr("rep.bad_range"))
+            return
+        self.status_label.clear()
         try:
-            start, end = self._range()
             register = reports.sales_register(conn, start, end)
             gst = reports.gst_summary(conn, start, end)
             day = reports.daily_summary(conn, end)
         except Exception as exc:
-            for model in (self.sales_model, self.gst_model, self.day_model):
-                model.set_rows([])
+            self._clear_tables()
             self._show_error(exc)
             return
         money_cols = ("taxable_paise", "cgst_paise", "sgst_paise", "igst_paise", "round_off_paise", "total_paise")
@@ -101,7 +116,7 @@ class ReportsScreen(Screen):
                 (tr("rep.returns"), fmt.rupees(day["returns_paise"])),
                 (tr("rep.net"), fmt.rupees(day["net_paise"])),
                 (tr("rep.by_mode"), "")]
-        rows += [(tr(f"pay.{mode}"), fmt.rupees(amount)) for mode, amount in sorted(day["by_mode"].items())]
+        rows += [(self._mode_text(mode), fmt.rupees(amount)) for mode, amount in sorted(day["by_mode"].items())]
         self.day_model.set_rows(rows, right_cols=(1,))
 
     # --- exports (reports are read-only operations, so these stay enabled after expiry) --------
