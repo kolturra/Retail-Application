@@ -17,6 +17,7 @@ class AppSession(QObject):
     language_changed = Signal(str)
     read_only_changed = Signal(bool)
     data_changed = Signal()
+    restored = Signal()          # the database was replaced: remembered row ids are meaningless now
 
     def __init__(self, paths, settings, conn, license_state, *, public_key, machine_id):
         super().__init__()
@@ -104,12 +105,17 @@ class AppSession(QObject):
             log.exception("could not reopen the database after restore")
             raise (original if original is not None else reopen_error)
         guard.set_read_only(self.license.read_only)
+        if original is None:
+            self.restored.emit()  # first, so nobody keeps a bill id from the replaced data
+        new_language = None
         if self.has_shop():
             code = self.shop()["language"]
             if code != i18n.get_language():
                 i18n.set_language(code)
-                self.language_changed.emit(code)
+                new_language = code
         self.data_changed.emit()
+        if new_language is not None:
+            self.language_changed.emit(new_language)  # after the data, so screens retranslate current data
         if original is not None:
             raise original
         return result

@@ -71,6 +71,7 @@ class CounterScreen(Screen):
             self.shortcut_keys[key] = shortcut
 
         self.bind(self.entry, "counter.entry_hint", "setPlaceholderText")
+        session.restored.connect(self._on_restored)
         self.retranslate()
 
     def _button(self, key, suffix, handler, row):
@@ -83,7 +84,13 @@ class CounterScreen(Screen):
     # --- Screen protocol ------------------------------------------------------
     def retranslate(self):
         super().retranslate()
+        self._drop_stale_bill()
         self._render()
+
+    def _on_restored(self):
+        """The database was replaced: a bill id (even one that exists again) belongs to other data."""
+        self.controller.bill_id = None
+        self.last_bill_id = None
 
     def refresh(self):
         self._drop_stale_bill()

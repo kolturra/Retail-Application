@@ -280,9 +280,11 @@ def test_refresh_after_a_restore_follows_the_new_connection(make_session, qtbot)
     qtbot.addWidget(sc)
     type_and_enter(sc, "8901")
     snapshot = session.backup_now().path
-    session.restore_from(snapshot)                    # new connection, same data
+    session.restore_from(snapshot)                    # new connection; the open bill is forgotten (ids are not portable)
     sc.refresh()
-    assert sc.controller.conn is session.conn and sc.model.rowCount() == 1
+    assert sc.controller.conn is session.conn and sc.model.rowCount() == 0 and sc.controller.bill_id is None
+    type_and_enter(sc, "8901")                        # and the screen works on the new connection
+    assert sc.model.rowCount() == 1
 
 
 def test_refresh_after_a_restore_clears_a_bill_id_missing_from_the_restored_database(make_session, qtbot):

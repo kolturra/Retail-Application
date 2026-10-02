@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
             self.screens[row].refresh()
 
     def _on_data_changed(self):
+        self._update_status()  # the shop name may have been edited or restored
         row = self.stack.currentIndex()
         if 0 <= row < len(self.screens):
             self.screens[row].refresh()
@@ -104,7 +105,10 @@ class MainWindow(QMainWindow):
             fonts.apply_language_font(app, code)
         for i, screen in enumerate(self.screens):
             self.nav.item(i).setText(tr(screen.nav_key))
-            screen.retranslate()
+            try:
+                screen.retranslate()
+            except Exception:  # one screen must never stop the others from switching language
+                log.exception("retranslating %s failed", type(screen).__name__)
         self._update_banner()
         self._update_status()
 
