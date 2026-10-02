@@ -280,5 +280,7 @@
   "data.folder_fallback": "आपका चुना हुआ फ़ोल्डर उपलब्ध नहीं है, इसलिए बैकअप यहाँ जा रहे हैं: {path}",
   "data.folder_in_use": "बैकअप यहाँ सहेजे जाते हैं: {path}",
   "bill.hsn": "एचएसएन कोड",
-  "bill.place_of_supply": "आपूर्ति का स्थान"
+  "bill.place_of_supply": "आपूर्ति का स्थान",
+  "rep.export_stock": "स्टॉक रजिस्टर निर्यात करें (CSV)",
+  "rep.export_ledger": "पार्टी खाता-बही निर्यात करें (CSV)"
 }

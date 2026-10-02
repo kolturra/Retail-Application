@@ -146,3 +146,55 @@ def test_write_csv_quoting_round_trip(tmp_path):
         out = list(csv.reader(handle))
     assert out[0] == ["party", "total"]
     assert out[1] == [text, "1.50"]
+
+
+def test_stock_register_lists_items_with_derived_on_hand(shop_conn, tmp_path):
+    soap = items.create_item(shop_conn, name="Soap", sell_price_paise=11800, buy_price_paise=9000,
+                             sku="SO-1", reorder_milli=5000)
+    items.create_item(shop_conn, name="=evil", sell_price_paise=100)
+    stock.record(shop_conn, soap, 12_500, "opening")
+    rows = reports.stock_register(shop_conn)
+    assert [r["item"] for r in rows] == ["=evil", "Soap"]
+    assert rows[1]["on_hand_milli"] == 12_500 and rows[0]["on_hand_milli"] == 0 and rows[0]["sku"] == ""
+    path = tmp_path / "stock.csv"
+    reports.write_csv(rows, path, reports.STOCK_COLUMNS)
+    out = _read_dicts(path)
+    assert out[0]["item"] == "'=evil"
+    assert out[1] == {"item": "Soap", "sku": "SO-1", "unit": "pcs", "active": "yes", "on_hand": "12.5",
+                      "reorder": "5", "buy_price": "90.00", "sell_price": "118.00"}
+
+
+def test_party_ledger_running_balance_matches_balance(shop_conn, tmp_path):
+    a, b = seed(shop_conn)
+    pune = shop_conn.execute("SELECT id FROM party").fetchone()["id"]
+    parties.receive_payment(shop_conn, pune, 3000, mode="upi")
+    rows = reports.party_ledger(shop_conn)
+    assert [(r["entry"], r["debit_paise"], r["credit_paise"], r["balance_paise"]) for r in rows] == [
+        ("opening", 0, 0, 0), ("credit_sale", 11800, 0, 11800), ("payment", 0, 3000, 8800)]
+    assert rows[1]["ref"] == "S000002" and rows[2]["ref"] == "upi"
+    assert rows[-1]["balance_paise"] == parties.balance(shop_conn, pune)
+    path = tmp_path / "ledger.csv"
+    reports.write_csv(rows, path, reports.LEDGER_COLUMNS)
+    out = _read_dicts(path)
+    assert out[1]["debit"] == "118.00" and out[2]["balance"] == "88.00" and out[0]["party"] == "Pune Traders"
+
+
+def test_party_ledger_opening_balance_and_credit_return(shop_conn):
+    pid = parties.create_party(shop_conn, name="Ravi", opening_balance_paise=5000)
+    parties.create_party(shop_conn, name="Zed")
+    soap = items.create_item(shop_conn, name="Soap", sell_price_paise=10000)
+    stock.record(shop_conn, soap, 10_000, "opening")
+    bill = billing.start_bill(shop_conn, party_id=pid)
+    line = billing.add_line(shop_conn, bill, soap, 2000)
+    billing.finalize(shop_conn, bill, [("credit", 20000)])
+    billing.create_return(shop_conn, bill, [(line, 1000)], refund_mode="credit")
+    rows = [r for r in reports.party_ledger(shop_conn) if r["party"] == "Ravi"]
+    assert [r["entry"] for r in rows] == ["opening", "credit_sale", "credit_return"]
+    assert rows[0]["balance_paise"] == 5000 and rows[-1]["balance_paise"] == parties.balance(shop_conn, pid) == 15000
+    assert [r["party"] for r in reports.party_ledger(shop_conn)][-1] == "Zed"
+
+
+def test_stock_and_ledger_reports_work_when_expired(shop_conn):
+    seed(shop_conn)
+    guard.set_read_only(True)
+    assert reports.stock_register(shop_conn) and reports.party_ledger(shop_conn)

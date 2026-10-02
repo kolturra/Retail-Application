@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QDate, Qt
 
 from retail import i18n
-from retail.services import billing, items, stock
+from retail.services import billing, items, parties, stock
 from retail_ui.screens.reports import ReportsScreen
 
 
@@ -138,3 +138,46 @@ def test_exports_stay_available_when_read_only_and_texts_retranslate(screen, tmp
             screen.export_sales_button.text()) != en
     assert all(a != b for a, b in zip((screen.tabs.tabText(0), screen.sales_model.headerData(3, Qt.Orientation.Horizontal),
                screen.export_sales_button.text()), en))
+
+
+def test_export_stock_register_csv_round_trip_and_injection(screen, tmp_path):
+    conn = screen.session.conn
+    soap = items.create_item(conn, name="Soap", sell_price_paise=11800, buy_price_paise=9000, unit="kg")
+    items.create_item(conn, name="=HYPERLINK(1)", sell_price_paise=100)
+    stock.record(conn, soap, 2_500, "opening")
+    screen._ask_save_path = lambda name: str(tmp_path / name)
+    screen.export_stock()
+    rows = _read(tmp_path / "stock_register.csv")
+    assert [r["item"] for r in rows] == ["'=HYPERLINK(1)", "Soap"]
+    assert rows[1]["on_hand"] == "2.5" and rows[1]["buy_price"] == "90.00" and rows[1]["unit"] == "kg"
+    assert "stock_register.csv" in screen.status_label.text() and screen.errors == []
+
+
+def test_export_party_ledgers_csv(screen, tmp_path):
+    seed(screen.session.conn)
+    parties.create_party(screen.session.conn, name="@cmd", opening_balance_paise=700)
+    screen._ask_save_path = lambda name: str(tmp_path / name)
+    screen.export_ledger()
+    rows = _read(tmp_path / "party_ledgers.csv")
+    assert [r["party"] for r in rows] == ["'@cmd"]
+    assert rows[0]["entry"] == "opening" and rows[0]["balance"] == "7.00"
+
+
+def test_new_exports_enabled_read_only_cancel_and_unwritable(screen, tmp_path):
+    screen.apply_read_only(True)
+    assert screen.export_stock_button.isEnabled() and screen.export_ledger_button.isEnabled()
+    screen._ask_save_path = lambda name: None
+    screen.export_stock()
+    screen.export_ledger()
+    assert [p.name for p in tmp_path.iterdir() if p.name != "RetailApp"] == [] and screen.errors == []
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    screen._ask_save_path = lambda name: str(blocker / "sub" / name)
+    screen.export_stock()
+    screen.export_ledger()
+    assert len(screen.errors) == 2
+    en = (screen.export_stock_button.text(), screen.export_ledger_button.text())
+    i18n.set_language("hi")
+    screen.retranslate()
+    assert screen.export_stock_button.text() == i18n.tr("rep.export_stock") != en[0]
+    assert screen.export_ledger_button.text() == i18n.tr("rep.export_ledger") != en[1]
